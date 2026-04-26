@@ -48,7 +48,7 @@ adminRouter.use('*', requireUser, requireSuperAdmin);
 
 // ─── DASHBOARD ──────────────────────────────────────────
 adminRouter.get('/stats', async (c) => {
-  const [stats] = await db.execute(sql`
+  const result = await db.execute(sql`
     SELECT
       (SELECT count(*)::int FROM ${tenants}) AS total_tenants,
       (SELECT count(*)::int FROM ${users}) AS total_users,
@@ -57,6 +57,7 @@ adminRouter.get('/stats', async (c) => {
       (SELECT COALESCE(sum(lifetime_spent), 0)::int FROM ${creditBalances}) AS total_credits_spent,
       (SELECT COALESCE(sum(amount_kobo), 0)::bigint FROM ${creditPurchases} WHERE status = 'success') AS total_revenue_kobo
   `);
+  const stats = result.rows[0];
   return c.json({ stats });
 });
 
