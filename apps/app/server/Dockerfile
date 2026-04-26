@@ -22,15 +22,18 @@ RUN npm --workspace @acumen/shared run build || true
 RUN npm --workspace @acumen/server run build
 
 # ─── Runner ────────────────────────────────────────────────
+# Keep the same /repo layout so the workspace symlinks in node_modules
+# (e.g. node_modules/@acumen/shared → ../apps/app/shared) still resolve.
 FROM node:20-slim AS runner
-WORKDIR /app
+WORKDIR /repo/apps/app/server
 ENV NODE_ENV=production
 
-# Hoisted node_modules + built dist + the shared package source
-COPY --from=builder /repo/node_modules ./node_modules
-COPY --from=builder /repo/apps/app/shared ./shared
-COPY --from=builder /repo/apps/app/server/dist ./dist
-COPY --from=builder /repo/apps/app/server/package.json ./
+COPY --from=builder /repo/node_modules /repo/node_modules
+COPY --from=builder /repo/package.json /repo/package.json
+COPY --from=builder /repo/apps/app/shared /repo/apps/app/shared
+COPY --from=builder /repo/apps/app/server/dist /repo/apps/app/server/dist
+COPY --from=builder /repo/apps/app/server/package.json /repo/apps/app/server/package.json
+COPY --from=builder /repo/apps/app/server/node_modules /repo/apps/app/server/node_modules
 
 ENV PORT=8080
 EXPOSE 8080
