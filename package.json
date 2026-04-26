@@ -10,7 +10,9 @@
     "apps/app/shared"
   ],
   "scripts": {
+    "predev": "npm --workspace @acumen/shared run build",
     "dev": "concurrently -n marketing,app-client,app-server -c yellow,cyan,magenta \"npm:dev:marketing\" \"npm:dev:app-client\" \"npm:dev:app-server\"",
+    "postinstall": "npm --workspace @acumen/shared run build || true",
     "dev:marketing": "npm --workspace @acumen/marketing run dev",
     "dev:app-client": "npm --workspace @acumen/client run dev",
     "dev:app-server": "npm --workspace @acumen/server run dev",

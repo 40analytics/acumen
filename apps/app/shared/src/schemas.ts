@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RESERVED_TENANT_SLUGS } from './constants';
+import { RESERVED_TENANT_SLUGS } from './constants.js';
 
 export const emailSchema = z.string().email().toLowerCase().trim();
 
