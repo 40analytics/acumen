@@ -26,7 +26,7 @@ export default function SignIn() {
     try {
       await authClient.signIn.magicLink({
         email: email.trim().toLowerCase(),
-        callbackURL: '/onboarding',
+        callbackURL: window.location.origin + '/onboarding',
       });
       setStatus('sent');
     } catch (err: any) {
@@ -38,7 +38,7 @@ export default function SignIn() {
   async function handleGoogleSignIn() {
     await authClient.signIn.social({
       provider: 'google',
-      callbackURL: '/onboarding',
+      callbackURL: window.location.origin + '/onboarding',
     });
   }
 

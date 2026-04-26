@@ -45,7 +45,13 @@ export default function SignUp() {
     if (country) cb.set('country', country);
     const fullPhone = phone.trim() ? `${phoneCode} ${phone.trim()}` : '';
     if (fullPhone) cb.set('phone', fullPhone);
-    return '/onboarding' + (cb.toString() ? `?${cb.toString()}` : '');
+    // Absolute URL — Better Auth resolves relative paths against its own
+    // baseURL (the API host), so we have to point at the app explicitly.
+    return (
+      window.location.origin +
+      '/onboarding' +
+      (cb.toString() ? `?${cb.toString()}` : '')
+    );
   }
 
   function validateRequired(): boolean {

@@ -223,14 +223,14 @@ function SignInPanel({
     onSending();
     await authClient.signIn.magicLink({
       email: inviteEmail,
-      callbackURL: window.location.pathname,
+      callbackURL: window.location.origin + window.location.pathname,
     });
     onSent();
   }
   async function handleGoogle() {
     await authClient.signIn.social({
       provider: 'google',
-      callbackURL: window.location.pathname,
+      callbackURL: window.location.origin + window.location.pathname,
     });
   }
 

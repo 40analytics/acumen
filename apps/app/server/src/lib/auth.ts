@@ -6,6 +6,13 @@ import { sendMagicLinkEmail } from './email.js';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 const API_URL = process.env.API_URL ?? 'http://localhost:8787';
+const MARKETING_URL = process.env.MARKETING_URL ?? 'http://localhost:4322';
+
+// Allow auth requests to come from the app, the marketing site, and
+// (in dev) localhost ports for both. De-dupes any overlap.
+const trustedOrigins = Array.from(
+  new Set([APP_URL, MARKETING_URL, 'http://localhost:5173', 'http://localhost:4322'])
+);
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
@@ -13,7 +20,7 @@ export const auth = betterAuth({
     usePlural: true,
   }),
   baseURL: API_URL,
-  trustedOrigins: [APP_URL],
+  trustedOrigins,
   emailAndPassword: {
     enabled: false,
   },
@@ -50,10 +57,20 @@ export const auth = betterAuth({
     },
   },
   advanced: {
+    // Allow the session cookie set by api.acumen.40analytics.com to be
+    // visible from app.acumen.40analytics.com (and the marketing host).
+    // In dev this is undefined → cookie scopes to localhost.
+    crossSubDomainCookies: process.env.COOKIE_DOMAIN
+      ? {
+          enabled: true,
+          domain: process.env.COOKIE_DOMAIN,
+        }
+      : undefined,
     defaultCookieAttributes: {
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
+      ...(process.env.COOKIE_DOMAIN ? { domain: process.env.COOKIE_DOMAIN } : {}),
     },
   },
 });
