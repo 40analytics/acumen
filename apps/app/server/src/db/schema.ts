@@ -43,6 +43,7 @@ export const users = pgTable(
     id: text('id').primaryKey(),
     email: text('email').notNull().unique(),
     name: text('name'),
+    phone: text('phone'),
     image: text('image'),
     emailVerified: boolean('email_verified').notNull().default(false),
     isSuperAdmin: boolean('is_super_admin').notNull().default(false),
@@ -189,6 +190,8 @@ export const tenantMembers = pgTable(
     tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
     userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     role: tenantRoleEnum('role').notNull().default('member'),
+    /** The member's job title at this school (e.g. Headteacher, Exam Officer) */
+    jobTitle: text('job_title'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -454,6 +457,14 @@ export const impersonationSessions = pgTable(
     sessionIdx: index('impersonation_session_idx').on(t.sessionId),
   })
 );
+
+// ─── APP SETTINGS ──────────────────────────────────────
+/** Key-value store for runtime config (e.g. usd_rate, feature flags) */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─── AUDIT (super-admin actions) ─────────────────────────
 export const adminAuditLog = pgTable('admin_audit_log', {

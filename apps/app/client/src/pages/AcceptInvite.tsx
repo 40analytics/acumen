@@ -159,8 +159,16 @@ export default function AcceptInvite() {
                         size="lg"
                         className="w-full"
                         onClick={async () => {
+                          // Sign out, then immediately send magic link to the
+                          // invite email so user doesn't need an extra click.
+                          setSignInState('sending');
+                          const inviteEmail = data.invite!.email;
                           await authClient.signOut();
-                          await refetch();
+                          await authClient.signIn.magicLink({
+                            email: inviteEmail,
+                            callbackURL: window.location.origin + window.location.pathname,
+                          });
+                          setSignInState('sent');
                         }}
                       >
                         Sign out & switch account

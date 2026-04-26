@@ -226,4 +226,18 @@ CREATE INDEX IF NOT EXISTS credit_txn_org_idx ON credit_transactions (org_id, cr
 CREATE INDEX IF NOT EXISTS credit_purchases_org_idx ON credit_purchases (org_id, created_at);
 
 --> statement-breakpoint
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+--> statement-breakpoint
+-- Seed the default USD rate from the current env placeholder
+-- (admins can update via the admin portal)
+INSERT INTO app_settings (key, value, updated_at)
+VALUES ('usd_rate', '12', NOW())
+ON CONFLICT DO NOTHING;
+
+--> statement-breakpoint
 SELECT 'Migration complete: organisations feature applied' AS status;

@@ -5,6 +5,7 @@ import { SettingsLayout } from '@/components/SettingsLayout';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/Dialog';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { apiClient, ApiError } from '@/lib/api';
 import { Crown, Shield, User as UserIcon, Mail, MoreHorizontal, Trash2 } from 'lucide-react';
 
@@ -31,6 +32,15 @@ interface Invite {
 interface Me {
   user: { id: string; email: string };
   tenants: Array<{ slug: string; role: Role }>;
+}
+
+function formatExpiry(isoDate: string): string {
+  const diff = new Date(isoDate).getTime() - Date.now();
+  const days = Math.round(diff / (1000 * 60 * 60 * 24));
+  if (days < 0) return 'Expired';
+  if (days === 0) return 'Expires today';
+  if (days === 1) return 'Expires tomorrow';
+  return `Expires in ${days} days`;
 }
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -163,8 +173,18 @@ export default function SettingsTeam() {
                       <td className="px-5 py-3.5">
                         <RoleBadge role={inv.role} />
                       </td>
-                      <td className="px-5 py-3.5 text-muted text-[12.5px]">
-                        {new Date(inv.expiresAt).toLocaleDateString()}
+                      <td className="px-5 py-3.5 text-[12.5px]">
+                        <span
+                          className={
+                            new Date(inv.expiresAt) < new Date()
+                              ? 'text-coral'
+                              : new Date(inv.expiresAt).getTime() - Date.now() < 86400 * 2 * 1000
+                              ? 'text-honey'
+                              : 'text-muted'
+                          }
+                        >
+                          {formatExpiry(inv.expiresAt)}
+                        </span>
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <InviteRowActions
@@ -310,6 +330,7 @@ function InviteRowActions({
   tenantSlug: string;
   onMutate: () => void;
 }) {
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
   const resend = useMutation({
     mutationFn: () =>
       apiClient.post(`/api/t/${tenantSlug}/members/invites/${invite.id}/resend`),
@@ -318,27 +339,38 @@ function InviteRowActions({
   const revoke = useMutation({
     mutationFn: () =>
       apiClient.delete(`/api/t/${tenantSlug}/members/invites/${invite.id}`),
-    onSuccess: onMutate,
+    onSuccess: () => { setConfirmRevoke(false); onMutate(); },
+    onError: () => setConfirmRevoke(false),
   });
   return (
-    <div className="flex items-center justify-end gap-2">
-      <button
-        onClick={() => resend.mutate()}
-        disabled={resend.isPending}
-        className="text-[12.5px] font-semibold text-ink hover:text-accent"
-      >
-        {resend.isPending ? 'Sending…' : 'Resend'}
-      </button>
-      <span className="text-faint">·</span>
-      <button
-        onClick={() => {
-          if (confirm(`Revoke invitation to ${invite.email}?`)) revoke.mutate();
-        }}
-        className="text-[12.5px] font-semibold text-coral hover:underline"
-      >
-        Revoke
-      </button>
-    </div>
+    <>
+      <div className="flex items-center justify-end gap-2">
+        <button
+          onClick={() => resend.mutate()}
+          disabled={resend.isPending}
+          className="text-[12.5px] font-semibold text-ink hover:text-accent"
+        >
+          {resend.isPending ? 'Sending…' : 'Resend'}
+        </button>
+        <span className="text-faint">·</span>
+        <button
+          onClick={() => setConfirmRevoke(true)}
+          className="text-[12.5px] font-semibold text-coral hover:underline"
+        >
+          Revoke
+        </button>
+      </div>
+      <ConfirmDialog
+        open={confirmRevoke}
+        onOpenChange={setConfirmRevoke}
+        title="Revoke invitation?"
+        description={`Cancel the pending invitation to ${invite.email}. They won't be able to use the invite link.`}
+        confirmLabel="Revoke"
+        variant="danger"
+        isPending={revoke.isPending}
+        onConfirm={() => revoke.mutate()}
+      />
+    </>
   );
 }
 
@@ -355,9 +387,13 @@ function MemberActions({
   isSelf: boolean;
   onMutate: () => void;
 }) {
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
   const remove = useMutation({
     mutationFn: () => apiClient.delete(`/api/t/${tenantSlug}/members/${member.userId}`),
-    onSuccess: onMutate,
+    onSuccess: () => { setConfirmLeave(false); setConfirmRemove(false); onMutate(); },
+    onError: () => { setConfirmLeave(false); setConfirmRemove(false); },
   });
   const changeRole = useMutation({
     mutationFn: (role: Role) =>
@@ -368,40 +404,58 @@ function MemberActions({
   if (isSelf) {
     if (member.role === 'owner') return null;
     return (
-      <button
-        onClick={() => {
-          if (confirm('Leave this workspace?')) remove.mutate();
-        }}
-        className="text-[12.5px] font-semibold text-coral hover:underline"
-      >
-        Leave
-      </button>
+      <>
+        <button
+          onClick={() => setConfirmLeave(true)}
+          className="text-[12.5px] font-semibold text-coral hover:underline"
+        >
+          Leave
+        </button>
+        <ConfirmDialog
+          open={confirmLeave}
+          onOpenChange={setConfirmLeave}
+          title="Leave workspace?"
+          description="You'll lose access immediately. An owner can re-invite you if needed."
+          confirmLabel="Leave"
+          variant="danger"
+          isPending={remove.isPending}
+          onConfirm={() => remove.mutate()}
+        />
+      </>
     );
   }
 
   return (
-    <div className="flex items-center justify-end gap-2">
-      {canChangeRole && member.role !== 'owner' && (
-        <select
-          value={member.role}
-          onChange={(e) => changeRole.mutate(e.target.value as Role)}
-          className="text-[12px] font-semibold border border-border rounded px-2 py-1 bg-surface cursor-pointer"
+    <>
+      <div className="flex items-center justify-end gap-2">
+        {canChangeRole && member.role !== 'owner' && (
+          <select
+            value={member.role}
+            onChange={(e) => changeRole.mutate(e.target.value as Role)}
+            className="text-[12px] font-semibold border border-border rounded px-2 py-1 bg-surface cursor-pointer"
+          >
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+        )}
+        <button
+          onClick={() => setConfirmRemove(true)}
+          className="text-muted hover:text-coral p-1.5 rounded"
+          title="Remove member"
         >
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
-        </select>
-      )}
-      <button
-        onClick={() => {
-          if (confirm(`Remove ${member.name ?? member.email} from the workspace?`)) {
-            remove.mutate();
-          }
-        }}
-        className="text-muted hover:text-coral p-1.5 rounded"
-        title="Remove"
-      >
-        <Trash2 size={14} />
-      </button>
-    </div>
+          <Trash2 size={14} />
+        </button>
+      </div>
+      <ConfirmDialog
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        title="Remove member?"
+        description={`Remove ${member.name ?? member.email} from the workspace? They'll lose access immediately.`}
+        confirmLabel="Remove"
+        variant="danger"
+        isPending={remove.isPending}
+        onConfirm={() => remove.mutate()}
+      />
+    </>
   );
 }

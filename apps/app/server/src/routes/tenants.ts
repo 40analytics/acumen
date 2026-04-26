@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { count, eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
+  users,
   tenants,
   tenantMembers,
   creditBalances,
@@ -160,6 +161,7 @@ tenantsRouter.post(
         .values({
           slug: input.workspaceSlug,
           name: input.workspaceName,
+          countryCode: input.countryCode || null,
           orgId: org.id,
         })
         .returning();
@@ -168,7 +170,20 @@ tenantsRouter.post(
         tenantId: workspace.id,
         userId: user.id,
         role: 'owner',
+        jobTitle: input.userJobTitle || null,
       });
+
+      // Update the user's profile (name + phone) if provided
+      if (input.userName || input.userPhone) {
+        await tx
+          .update(users)
+          .set({
+            ...(input.userName ? { name: input.userName } : {}),
+            ...(input.userPhone !== undefined ? { phone: input.userPhone || null } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, user.id));
+      }
 
       return { org, workspace };
     });

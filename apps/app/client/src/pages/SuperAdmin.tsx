@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Logo } from '@/components/Logo';
 import { apiClient } from '@/lib/api';
 import { CREDIT_PACKS } from '@acumen/shared';
@@ -14,13 +15,17 @@ import {
   Search,
   Shield,
   User as UserIcon,
-  Crown,
   ExternalLink,
   ClipboardList,
   Tag,
 } from 'lucide-react';
 
 type Tab = 'overview' | 'users' | 'pricing' | 'audit';
+
+interface AdminSettings {
+  usd_rate?: string;
+  [key: string]: string | undefined;
+}
 
 interface AdminStats {
   total_tenants: number;
@@ -70,9 +75,13 @@ function formatRevenue(kobo: number) {
 
 export default function SuperAdmin() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('overview');
   const [tenantSearch, setTenantSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
+  const [rateInput, setRateInput] = useState('');
+  const [auditPage, setAuditPage] = useState(0);
+  const AUDIT_PAGE_SIZE = 25;
 
   const { data: statsData } = useQuery({
     queryKey: ['admin-stats'],
@@ -98,6 +107,29 @@ export default function SuperAdmin() {
     queryKey: ['admin-audit'],
     queryFn: () => apiClient.get<{ entries: AuditEntry[] }>('/api/admin/audit-log'),
     enabled: tab === 'audit',
+  });
+
+  const { data: settingsData } = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => apiClient.get<{ settings: AdminSettings }>('/api/admin/settings'),
+    enabled: tab === 'pricing',
+  });
+
+  // Sync settings into the rate input when data first loads
+  useEffect(() => {
+    if (settingsData?.settings.usd_rate && !rateInput) {
+      setRateInput(settingsData.settings.usd_rate);
+    }
+  }, [settingsData]);
+
+  const updateSettings = useMutation({
+    mutationFn: (payload: Record<string, number | string>) =>
+      apiClient.patch('/api/admin/settings', payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-settings'] });
+      toast.success('Exchange rate updated');
+    },
+    onError: () => toast.error('Failed to update settings'),
   });
 
   const stats = statsData?.stats;
@@ -364,8 +396,7 @@ export default function SuperAdmin() {
             <div className="mb-8">
               <h2 className="text-[22px] font-bold tracking-tighter">Credit pack pricing</h2>
               <p className="text-[14px] text-ink-soft mt-1">
-                Prices are converted from USD using the <code className="bg-surface-alt px-1 rounded text-[13px]">PAYSTACK_USD_RATE</code> environment variable.
-                To change pricing, update the packs in <code className="bg-surface-alt px-1 rounded text-[13px]">apps/app/shared/src/constants.ts</code> and redeploy.
+                Prices are converted from USD using the live exchange rate below. Update the rate and it takes effect within 60 seconds — no redeployment needed.
               </p>
             </div>
 
@@ -395,80 +426,147 @@ export default function SuperAdmin() {
             </div>
 
             <div className="card p-6 max-w-lg">
-              <h3 className="text-[15px] font-semibold mb-2">Current rate config</h3>
-              <div className="space-y-2 text-[14px]">
-                <div className="flex justify-between">
-                  <span className="text-muted">Currency</span>
-                  <code className="font-semibold">GHS</code>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted">USD → GHS rate</span>
-                  <code className="font-semibold">Set via PAYSTACK_USD_RATE env var</code>
-                </div>
-              </div>
-              <p className="text-[12.5px] text-muted mt-4">
-                To adjust the exchange rate or add new packs, update the Cloud Run service environment variables or the shared constants file and trigger a new deploy.
+              <h3 className="text-[15px] font-semibold mb-1">Exchange rate</h3>
+              <p className="text-[13px] text-ink-soft mb-5">
+                USD → local currency multiplier. Live prices in Billing are computed from this.
+                Changes take effect within 60 seconds (cached).
               </p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">
+                    USD rate (1 USD = ? local)
+                  </label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={rateInput}
+                    onChange={(e) => setRateInput(e.target.value)}
+                    placeholder={settingsData?.settings.usd_rate ?? '12'}
+                    className="w-full px-3 py-2 rounded border border-border bg-surface text-[14px] font-semibold focus:outline-none focus:border-ink"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const v = parseFloat(rateInput);
+                    if (isNaN(v) || v <= 0) {
+                      toast.error('Enter a valid positive rate');
+                      return;
+                    }
+                    updateSettings.mutate({ usd_rate: v });
+                  }}
+                  disabled={updateSettings.isPending}
+                  className="mt-6 px-5 py-2 rounded bg-ink text-bg text-[13.5px] font-semibold hover:bg-ink/90 disabled:opacity-50 transition-colors whitespace-nowrap"
+                >
+                  {updateSettings.isPending ? 'Saving…' : 'Save rate'}
+                </button>
+              </div>
+              <div className="flex items-center justify-between text-[12.5px] text-muted mt-3 border-t border-border-soft pt-3">
+                <span>Current in DB</span>
+                <code className="font-semibold">{settingsData?.settings.usd_rate ?? '—'}</code>
+              </div>
             </div>
           </>
         )}
 
         {/* ── AUDIT LOG TAB ── */}
-        {tab === 'audit' && (
-          <>
-            <div className="mb-6">
-              <h2 className="text-[22px] font-bold tracking-tighter">Audit log</h2>
-              <p className="text-[14px] text-ink-soft mt-0.5">All super-admin actions: impersonations, credit grants/revokes.</p>
-            </div>
+        {tab === 'audit' && (() => {
+          const allEntries = auditData?.entries ?? [];
+          const totalPages = Math.ceil(allEntries.length / AUDIT_PAGE_SIZE);
+          const pageEntries = allEntries.slice(
+            auditPage * AUDIT_PAGE_SIZE,
+            (auditPage + 1) * AUDIT_PAGE_SIZE
+          );
+          return (
+            <>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-[22px] font-bold tracking-tighter">Audit log</h2>
+                  <p className="text-[14px] text-ink-soft mt-0.5">
+                    All super-admin actions: impersonations, credit grants/revokes.
+                  </p>
+                </div>
+                {allEntries.length > 0 && (
+                  <span className="text-[12.5px] text-muted">
+                    {allEntries.length} event{allEntries.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
 
-            <div className="card overflow-hidden">
-              <table className="w-full text-[14px]">
-                <thead className="bg-surface-alt border-b border-border">
-                  <tr className="text-left text-[11px] uppercase tracking-wider text-muted">
-                    <Th>Action</Th>
-                    <Th>Actor</Th>
-                    <Th>Details</Th>
-                    <Th>IP</Th>
-                    <Th>When</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(auditData?.entries ?? []).map((e) => (
-                    <tr key={e.id} className="border-b border-border-soft last:border-0">
-                      <Td>
-                        <ActionBadge action={e.action} />
-                      </Td>
-                      <Td>
-                        <div className="font-semibold text-[13px]">{e.actorName ?? e.actorEmail?.split('@')[0]}</div>
-                        <div className="text-[12px] text-muted">{e.actorEmail}</div>
-                      </Td>
-                      <Td>
-                        <span className="text-[12.5px] text-ink-soft font-mono">
-                          {e.metadata ? JSON.stringify(e.metadata).slice(0, 80) : '—'}
-                        </span>
-                      </Td>
-                      <Td>
-                        <span className="text-[12px] text-muted font-mono">{e.ipAddress ?? '—'}</span>
-                      </Td>
-                      <Td>
-                        <span className="text-[12.5px] text-muted whitespace-nowrap">
-                          {new Date(e.createdAt).toLocaleString()}
-                        </span>
-                      </Td>
+              <div className="card overflow-hidden">
+                <table className="w-full text-[14px]">
+                  <thead className="bg-surface-alt border-b border-border">
+                    <tr className="text-left text-[11px] uppercase tracking-wider text-muted">
+                      <Th>Action</Th>
+                      <Th>Actor</Th>
+                      <Th>Details</Th>
+                      <Th>IP</Th>
+                      <Th>When</Th>
                     </tr>
-                  ))}
-                  {auditData && auditData.entries.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-5 py-12 text-center text-muted">
-                        No audit events yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+                  </thead>
+                  <tbody>
+                    {pageEntries.map((e) => (
+                      <tr key={e.id} className="border-b border-border-soft last:border-0">
+                        <Td>
+                          <ActionBadge action={e.action} />
+                        </Td>
+                        <Td>
+                          <div className="font-semibold text-[13px]">
+                            {e.actorName ?? e.actorEmail?.split('@')[0]}
+                          </div>
+                          <div className="text-[12px] text-muted">{e.actorEmail}</div>
+                        </Td>
+                        <Td>
+                          <ExpandableMetadata metadata={e.metadata} />
+                        </Td>
+                        <Td>
+                          <span className="text-[12px] text-muted font-mono">
+                            {e.ipAddress ?? '—'}
+                          </span>
+                        </Td>
+                        <Td>
+                          <span className="text-[12.5px] text-muted whitespace-nowrap">
+                            {new Date(e.createdAt).toLocaleString()}
+                          </span>
+                        </Td>
+                      </tr>
+                    ))}
+                    {allEntries.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-12 text-center text-muted">
+                          No audit events yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-5 py-3 border-t border-border-soft bg-surface-alt text-[12.5px]">
+                    <span className="text-muted">
+                      Page {auditPage + 1} of {totalPages}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setAuditPage((p) => p - 1)}
+                        disabled={auditPage === 0}
+                        className="px-3 py-1.5 rounded border border-border text-ink font-semibold disabled:opacity-40 hover:bg-border-soft transition-colors"
+                      >
+                        ← Prev
+                      </button>
+                      <button
+                        onClick={() => setAuditPage((p) => p + 1)}
+                        disabled={auditPage >= totalPages - 1}
+                        className="px-3 py-1.5 rounded border border-border text-ink font-semibold disabled:opacity-40 hover:bg-border-soft transition-colors"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </main>
     </div>
   );
@@ -503,6 +601,34 @@ function ActionBadge({ action }: { action: string }) {
     >
       {action}
     </span>
+  );
+}
+
+function ExpandableMetadata({ metadata }: { metadata: Record<string, unknown> | null }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!metadata) return <span className="text-faint text-[12.5px]">—</span>;
+  const flat = JSON.stringify(metadata);
+  const needsExpand = flat.length > 80;
+  return (
+    <div className="max-w-[280px]">
+      {expanded ? (
+        <pre className="text-[11px] bg-surface-alt rounded p-2.5 font-mono text-ink-soft whitespace-pre-wrap break-all leading-relaxed">
+          {JSON.stringify(metadata, null, 2)}
+        </pre>
+      ) : (
+        <span className="text-[12px] text-ink-soft font-mono break-all">
+          {needsExpand ? flat.slice(0, 80) + '…' : flat}
+        </span>
+      )}
+      {needsExpand && (
+        <button
+          onClick={() => setExpanded((s) => !s)}
+          className="text-[11.5px] text-accent hover:underline mt-0.5 block"
+        >
+          {expanded ? 'collapse' : 'expand'}
+        </button>
+      )}
+    </div>
   );
 }
 

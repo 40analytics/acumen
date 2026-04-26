@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../db/index.js';
-import { tenantMembers, tenants, orgMembers, organisations } from '../db/schema.js';
+import { users, tenantMembers, tenants, orgMembers, organisations } from '../db/schema.js';
 import { requireUser, type AppEnv } from '../middleware/auth.js';
 
 export const meRouter = new Hono<AppEnv>();
@@ -14,7 +16,7 @@ meRouter.use('*', requireUser);
 meRouter.get('/', async (c) => {
   const user = c.get('user');
 
-  const [memberships, orgMemberships] = await Promise.all([
+  const [memberships, orgMemberships, userProfile] = await Promise.all([
     db
       .select({
         tenantId: tenants.id,
@@ -42,6 +44,12 @@ meRouter.get('/', async (c) => {
       .from(orgMembers)
       .innerJoin(organisations, eq(orgMembers.orgId, organisations.id))
       .where(eq(orgMembers.userId, user.id)),
+
+    db
+      .select({ phone: users.phone })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .then((rows) => rows[0] ?? null),
   ]);
 
   const actor = c.get('actor');
@@ -51,6 +59,7 @@ meRouter.get('/', async (c) => {
       id: user.id,
       email: user.email,
       name: user.name,
+      phone: userProfile?.phone ?? null,
       isSuperAdmin: user.isSuperAdmin,
     },
     tenants: memberships.filter((m) => m.tenantId),
@@ -63,3 +72,33 @@ meRouter.get('/', async (c) => {
       : null,
   });
 });
+
+/**
+ * PATCH /api/me — update the current user's display name and phone.
+ */
+meRouter.patch(
+  '/',
+  zValidator(
+    'json',
+    z.object({
+      name: z.string().min(1).max(80).trim().optional(),
+      phone: z.string().max(40).trim().optional().or(z.literal('')),
+    })
+  ),
+  async (c) => {
+    const user = c.get('user');
+    const input = c.req.valid('json');
+
+    const updates: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.phone !== undefined) updates.phone = input.phone || null;
+
+    const [updated] = await db
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, user.id))
+      .returning({ id: users.id, name: users.name, phone: users.phone });
+
+    return c.json({ user: updated });
+  }
+);

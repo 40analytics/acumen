@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.js';
 import { syllabusNomenclature, componentsNomenclature } from '../db/schema.js';
@@ -60,6 +60,39 @@ nomenclatureRouter.delete('/syllabus/:id', async (c) => {
     );
   return c.json({ ok: true });
 });
+
+// ── Syllabus bulk import ──
+const bulkImportSchema = z.object({
+  entries: z
+    .array(
+      z.object({
+        syllabusCode: z.string().min(1).max(20),
+        syllabusName: z.string().min(1).max(120),
+      })
+    )
+    .min(1)
+    .max(500),
+});
+
+nomenclatureRouter.post(
+  '/syllabus/bulk',
+  zValidator('json', bulkImportSchema),
+  async (c) => {
+    const tenant = c.get('tenant')!;
+    requireRole(tenant, 'admin');
+    const { entries } = c.req.valid('json');
+
+    await db
+      .insert(syllabusNomenclature)
+      .values(entries.map((e) => ({ tenantId: tenant.tenantId, ...e })))
+      .onConflictDoUpdate({
+        target: [syllabusNomenclature.tenantId, syllabusNomenclature.syllabusCode],
+        set: { syllabusName: sql`EXCLUDED.syllabus_name` },
+      });
+
+    return c.json({ imported: entries.length });
+  }
+);
 
 // ── Component nomenclature ──
 nomenclatureRouter.get('/components', async (c) => {

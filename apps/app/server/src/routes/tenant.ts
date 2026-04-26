@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { db } from '../db/index.js';
-import { creditBalances, tenantMembers, users, organisations } from '../db/schema.js';
+import { creditBalances, tenantMembers, tenants, users, organisations } from '../db/schema.js';
 import { requireUser, requireTenant, type AppEnv } from '../middleware/auth.js';
 import { billingRouter } from './billing.js';
 import { uploadsRouter } from './uploads.js';
@@ -68,6 +70,28 @@ tenantRouter.get('/', async (c) => {
     },
   });
 });
+
+/**
+ * PATCH /api/t/:tenantSlug/settings — update mutable workspace settings (owners only).
+ * Currently supports: name
+ */
+tenantRouter.patch(
+  '/settings',
+  zValidator('json', z.object({ name: z.string().min(1).max(80).trim() })),
+  async (c) => {
+    const tenant = c.get('tenant')!;
+    if (tenant.role !== 'owner') {
+      return c.json({ error: 'Only workspace owners can change workspace settings.' }, 403);
+    }
+    const { name } = c.req.valid('json');
+    const [updated] = await db
+      .update(tenants)
+      .set({ name })
+      .where(eq(tenants.id, tenant.tenantId))
+      .returning({ id: tenants.id, slug: tenants.slug, name: tenants.name });
+    return c.json({ tenant: updated });
+  }
+);
 
 /**
  * GET /api/t/:tenantSlug/members — list team members

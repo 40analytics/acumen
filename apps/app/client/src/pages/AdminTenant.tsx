@@ -5,6 +5,7 @@ import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/Dialog';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { apiClient, ApiError } from '@/lib/api';
 import {
   ArrowLeft,
@@ -40,6 +41,9 @@ export default function AdminTenant() {
   const { tenantId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [impersonateTarget, setImpersonateTarget] = useState<
+    { userId: string; email: string } | null
+  >(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-tenant', tenantId],
@@ -51,10 +55,11 @@ export default function AdminTenant() {
     mutationFn: (userId: string) =>
       apiClient.post('/api/admin/impersonate', { userId }),
     onSuccess: () => {
+      setImpersonateTarget(null);
       qc.invalidateQueries();
-      // Send the now-impersonated user to the tenant dashboard
       if (data) navigate(`/${data.tenant.slug}/dashboard`);
     },
+    onError: () => setImpersonateTarget(null),
   });
 
   return (
@@ -195,15 +200,9 @@ export default function AdminTenant() {
                         </td>
                         <td className="px-5 py-3 text-right">
                           <button
-                            onClick={() => {
-                              if (
-                                confirm(
-                                  `Impersonate ${m.email}? Your actions will be audit-logged.`
-                                )
-                              ) {
-                                impersonate.mutate(m.userId);
-                              }
-                            }}
+                            onClick={() =>
+                              setImpersonateTarget({ userId: m.userId, email: m.email })
+                            }
                             disabled={impersonate.isPending}
                             className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-accent hover:underline"
                           >
@@ -332,6 +331,22 @@ export default function AdminTenant() {
           </>
         )}
       </main>
+
+      <ConfirmDialog
+        open={!!impersonateTarget}
+        onOpenChange={(o) => { if (!o) setImpersonateTarget(null); }}
+        title="Impersonate user?"
+        description={
+          impersonateTarget
+            ? `You'll be signed in as ${impersonateTarget.email} and can act on their behalf. All actions during this session are audit-logged.`
+            : ''
+        }
+        confirmLabel="Impersonate"
+        isPending={impersonate.isPending}
+        onConfirm={() =>
+          impersonateTarget && impersonate.mutate(impersonateTarget.userId)
+        }
+      />
     </div>
   );
 }

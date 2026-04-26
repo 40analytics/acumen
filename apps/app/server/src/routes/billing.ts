@@ -6,6 +6,7 @@ import {
   creditBalances,
   creditPurchases,
   creditTransactions,
+  appSettings,
 } from '../db/schema.js';
 import { initTransaction, verifyTransaction, generateReference } from '../lib/paystack.js';
 import { sendReceiptEmail } from '../lib/email.js';
@@ -19,27 +20,56 @@ import { CREDIT_PACKS, purchaseCreditsSchema, type CreditPack } from '@acumen/sh
 export const billingRouter = new Hono<AppEnv>();
 
 const CURRENCY = (process.env.PAYSTACK_CURRENCY ?? 'GHS') as 'GHS' | 'NGN' | 'USD' | 'ZAR' | 'KES';
-const USD_TO_LOCAL = Number(process.env.PAYSTACK_USD_RATE ?? 12); // 1 USD = 12 GHS placeholder
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 
-function packPrice(pack: CreditPack) {
-  const amountLocal = +(pack.priceUsd * USD_TO_LOCAL).toFixed(2);
+/** Cached USD→local rate — refreshed from DB every 60 s (falls back to env var) */
+let rateCache: { value: number; expiresAt: number } | null = null;
+
+export async function getUsdRate(): Promise<number> {
+  const now = Date.now();
+  if (rateCache && now < rateCache.expiresAt) return rateCache.value;
+  try {
+    const row = await db.query.appSettings.findFirst({
+      where: eq(appSettings.key, 'usd_rate'),
+    });
+    if (row) {
+      const parsed = parseFloat(row.value);
+      if (!isNaN(parsed) && parsed > 0) {
+        rateCache = { value: parsed, expiresAt: now + 60_000 };
+        return parsed;
+      }
+    }
+  } catch {
+    // Fall through to env var
+  }
+  const fallback = Number(process.env.PAYSTACK_USD_RATE ?? 12);
+  rateCache = { value: fallback, expiresAt: now + 60_000 };
+  return fallback;
+}
+
+async function packPrice(pack: CreditPack) {
+  const rate = await getUsdRate();
+  const amountLocal = +(pack.priceUsd * rate).toFixed(2);
   return {
     amountLocal,
     amountKobo: Math.round(amountLocal * 100),
     currency: CURRENCY,
+    usdRate: rate,
   };
 }
 
 /**
  * GET /api/t/:tenantSlug/billing/packs — list packs with current pricing
  */
-billingRouter.get('/packs', (c) => {
-  const packs = CREDIT_PACKS.map((pack) => ({
-    ...pack,
-    ...packPrice(pack),
-  }));
-  return c.json({ packs, currency: CURRENCY, usdRate: USD_TO_LOCAL });
+billingRouter.get('/packs', async (c) => {
+  const usdRate = await getUsdRate();
+  const packs = await Promise.all(
+    CREDIT_PACKS.map(async (pack) => ({
+      ...pack,
+      ...(await packPrice(pack)),
+    }))
+  );
+  return c.json({ packs, currency: CURRENCY, usdRate });
 });
 
 /**
@@ -248,7 +278,7 @@ billingRouter.post('/checkout', zValidator('json', purchaseCreditsSchema), async
   const pack = CREDIT_PACKS.find((p) => p.id === packId);
   if (!pack) return c.json({ error: 'Unknown pack' }, 400);
 
-  const { amountLocal, amountKobo, currency } = packPrice(pack);
+  const { amountLocal, amountKobo, currency } = await packPrice(pack);
   const reference = generateReference('ACU');
   const callbackUrl = `${APP_URL}/${tenant.tenantSlug}/billing/callback`;
 

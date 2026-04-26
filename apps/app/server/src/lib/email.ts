@@ -73,6 +73,52 @@ export async function sendInviteEmail(args: {
   });
 }
 
+export async function sendContactAckEmail(args: {
+  email: string;
+  name: string;
+}) {
+  const content = `
+    <h1 style="font-size: 24px; font-weight: 700; letter-spacing: -1px; margin: 0 0 12px;">We got your message</h1>
+    <p style="margin: 0 0 24px; color: #27272A;">Hi ${args.name || 'there'} — thanks for reaching out. We've received your message and will reply within one working day.</p>
+    <p style="margin: 0; font-size: 13px; color: #71717A;">In the meantime, feel free to explore Acumen — your first upload is always on us.</p>
+  `;
+  return resend.emails.send({
+    from: FROM,
+    to: args.email,
+    subject: 'We received your message — Acumen',
+    html: wrapEmail(content),
+  });
+}
+
+export async function sendContactNotificationEmail(args: {
+  name: string;
+  school: string;
+  email: string;
+  role: string;
+  message: string;
+}) {
+  const TEAM_EMAIL = process.env.TEAM_EMAIL ?? 'hello@acumen.app';
+  const content = `
+    <h1 style="font-size: 20px; font-weight: 700; letter-spacing: -0.5px; margin: 0 0 20px;">New contact form submission</h1>
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+      <tr><td style="padding: 8px 0; color: #71717A; width: 120px;">Name</td><td style="padding: 8px 0; font-weight: 600;">${args.name}</td></tr>
+      <tr><td style="padding: 8px 0; color: #71717A;">School</td><td style="padding: 8px 0; font-weight: 600;">${args.school}</td></tr>
+      <tr><td style="padding: 8px 0; color: #71717A;">Email</td><td style="padding: 8px 0;"><a href="mailto:${args.email}" style="color: #9A3412;">${args.email}</a></td></tr>
+      <tr><td style="padding: 8px 0; color: #71717A;">Role</td><td style="padding: 8px 0;">${args.role}</td></tr>
+    </table>
+    <div style="background: #F9F8F6; border-radius: 8px; padding: 16px; font-size: 14px; line-height: 1.7; color: #27272A;">
+      ${args.message.replace(/\n/g, '<br/>')}
+    </div>
+  `;
+  return resend.emails.send({
+    from: FROM,
+    to: TEAM_EMAIL,
+    replyTo: args.email,
+    subject: `Contact: ${args.name} — ${args.school}`,
+    html: wrapEmail(content),
+  });
+}
+
 export async function sendReceiptEmail(args: {
   email: string;
   tenantName: string;

@@ -10,6 +10,7 @@ import { orgsRouter } from './routes/orgs.js';
 import { adminRouter } from './routes/admin.js';
 import { adminAuthRouter } from './routes/adminAuth.js';
 import { invitesRouter } from './routes/invites.js';
+import { contactRouter } from './routes/contact.js';
 // NOTE: Paystack webhook intentionally NOT mounted — the Paystack account
 // is shared across multiple Acumen-unrelated apps, so we cannot rely on
 // webhook events being scoped to us. Verification happens via the active
@@ -17,6 +18,12 @@ import { invitesRouter } from './routes/invites.js';
 import type { AppEnv } from './middleware/auth.js';
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
+const MARKETING_URL = process.env.MARKETING_URL ?? 'http://localhost:4322';
+
+// Allow requests from both the app and the marketing site.
+const allowedOrigins = Array.from(
+  new Set([APP_URL, MARKETING_URL, 'http://localhost:5173', 'http://localhost:4322'])
+);
 
 const app = new Hono<AppEnv>();
 
@@ -24,7 +31,7 @@ app.use(logger());
 app.use(
   '*',
   cors({
-    origin: APP_URL,
+    origin: (origin) => (allowedOrigins.includes(origin) ? origin : null),
     credentials: true,
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
@@ -44,6 +51,7 @@ app.route('/api/orgs', orgsRouter);
 app.route('/api/admin/auth', adminAuthRouter);   // public — login/logout/me
 app.route('/api/admin', adminRouter);             // protected — requireAdminToken
 app.route('/api/invites', invitesRouter);
+app.route('/api/contact', contactRouter);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 app.onError((err, c) => {

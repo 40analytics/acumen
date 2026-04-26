@@ -15,6 +15,7 @@ import {
   users,
   adminAuditLog,
   impersonationSessions,
+  appSettings,
 } from '../db/schema.js';
 import { requireUser, type AppEnv } from '../middleware/auth.js';
 import { requireAdminToken, ADMIN_EMAIL } from '../middleware/adminAuth.js';
@@ -347,6 +348,43 @@ adminRouter.post('/impersonate', zValidator('json', impersonateSchema), async (c
     impersonating: { id: target.id, email: target.email, name: target.name },
     tenantSlug: (firstMembership as any)?.tenant?.slug ?? null,
   });
+});
+
+// ─── APP SETTINGS ───────────────────────────────────────
+const settingsSchema = z.object({
+  usd_rate: z.number().positive().max(10000).optional(),
+}).passthrough();
+
+adminRouter.get('/settings', async (c) => {
+  const rows = await db.select().from(appSettings);
+  const settings: Record<string, string> = {};
+  for (const r of rows) settings[r.key] = r.value;
+  return c.json({ settings });
+});
+
+adminRouter.patch('/settings', zValidator('json', z.record(z.string(), z.union([z.string(), z.number()]))), async (c) => {
+  const updates = c.req.valid('json');
+  const actor = await getAdminActor();
+
+  for (const [key, raw] of Object.entries(updates)) {
+    const value = String(raw);
+    await db
+      .insert(appSettings)
+      .values({ key, value, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: [appSettings.key],
+        set: { value, updatedAt: new Date() },
+      });
+  }
+
+  await db.insert(adminAuditLog).values({
+    actorUserId: actor.id,
+    action: 'settings.updated',
+    metadata: { keys: Object.keys(updates) },
+    ipAddress: c.req.header('x-forwarded-for') ?? null,
+  });
+
+  return c.json({ ok: true });
 });
 
 // ─── AUDIT LOG ──────────────────────────────────────────

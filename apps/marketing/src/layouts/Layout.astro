@@ -10,6 +10,7 @@ const {
 } = Astro.props;
 
 const APP_URL = import.meta.env.PUBLIC_APP_URL ?? 'http://localhost:5173';
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8787';
 ---
 
 <!doctype html>
@@ -19,6 +20,7 @@ const APP_URL = import.meta.env.PUBLIC_APP_URL ?? 'http://localhost:5173';
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
     <meta name="app-url" content={APP_URL} />
+    <meta name="api-url" content={API_URL} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />

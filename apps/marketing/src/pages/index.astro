@@ -2,10 +2,13 @@
 import Layout from '../layouts/Layout.astro';
 
 const APP_URL = import.meta.env.PUBLIC_APP_URL ?? 'http://localhost:5173';
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8787';
 const SIGN_IN_URL = `${APP_URL}/signin`;
 const SIGN_UP_URL = `${APP_URL}/signup`;
 
-const countries = [
+// Previously used for hero form country/phone selects — no longer rendered.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _unusedCountries = [
   { iso: 'AF', name: 'Afghanistan', dial: '+93', flag: '🇦🇫' },
   { iso: 'AL', name: 'Albania', dial: '+355', flag: '🇦🇱' },
   { iso: 'DZ', name: 'Algeria', dial: '+213', flag: '🇩🇿' },
@@ -1157,44 +1160,12 @@ const countries = [
             Acumen turns Cambridge IGCSE and A Level result files into instant academic intelligence — student performance, subject trends, and promotion eligibility. Upload once. Understand everything.
           </p>
           <form class="hero-form" id="hero-form">
-            <div class="form-row">
-              <div class="input-group">
-                <label for="hero-name">Your name</label>
-                <input type="text" id="hero-name" name="name" placeholder="Dr. Kwame Mensah" required />
-              </div>
-              <div class="input-group">
-                <label for="hero-school">School</label>
-                <input type="text" id="hero-school" name="school" placeholder="Your school's name" required />
-              </div>
-            </div>
             <div class="input-group">
-              <label for="hero-email">Email</label>
-              <input type="email" id="hero-email" name="email" placeholder="you@example.com" required />
+              <label for="hero-email">Work email</label>
+              <input type="email" id="hero-email" name="email" placeholder="you@school.edu" autocomplete="email" required />
             </div>
-            <div class="form-row">
-              <div class="input-group">
-                <label for="hero-country">Country</label>
-                <select id="hero-country" name="country" class="input-select" required>
-                  <option value="" disabled selected>Select country</option>
-                  {countries.map((c) => (
-                    <option value={c.iso}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div class="input-group">
-                <label for="hero-phone">Phone number</label>
-                <div class="phone-input">
-                  <select id="hero-phone-code" name="phoneCode" class="phone-code" aria-label="Country code">
-                    {countries.map((c) => (
-                      <option value={c.dial} data-iso={c.iso} selected={c.iso === 'GH'}>{c.flag} {c.dial}</option>
-                    ))}
-                  </select>
-                  <input type="tel" id="hero-phone" name="phone" placeholder="20 123 4567" required />
-                </div>
-              </div>
-            </div>
-            <button type="submit" class="btn-primary">Create your account →</button>
-            <p class="form-note">First upload free &nbsp;·&nbsp; No credit card required</p>
+            <button type="submit" class="btn-primary" id="hero-submit">Get started free →</button>
+            <p class="form-note" id="hero-note">First upload free &nbsp;·&nbsp; No credit card required</p>
           </form>
         </div>
 
@@ -1929,52 +1900,128 @@ const countries = [
     // App URL — read from <meta name="app-url"> if injected, else fall back
     const APP_URL = document.querySelector('meta[name="app-url"]')?.getAttribute('content')
       ?? 'http://localhost:5173';
+    const API_URL = document.querySelector('meta[name="api-url"]')?.getAttribute('content')
+      ?? 'http://localhost:8787';
 
-    // Hero form: collect lead data, hand off to /signup with prefill
-    const heroForm = document.getElementById('hero-form');
-    heroForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const fd = new FormData(heroForm);
-      const params = new URLSearchParams();
-      const email = String(fd.get('email') ?? '').trim().toLowerCase();
-      const school = String(fd.get('school') ?? '').trim();
-      const name = String(fd.get('name') ?? '').trim();
-      if (email) params.set('email', email);
-      if (school) params.set('school', school);
-      if (name) params.set('name', name);
-      const phoneCode = String(fd.get('phoneCode') ?? '').trim();
-      const phone = String(fd.get('phone') ?? '').trim();
-      if (phone) params.set('phone', `${phoneCode} ${phone}`.trim());
-      const country = String(fd.get('country') ?? '').trim();
-      if (country) params.set('country', country);
-      window.location.href = `${APP_URL}/signup?${params.toString()}`;
-    });
-
-    // Final CTA form: just email — hand off to /signup
-    const ctaForm = document.getElementById('cta-form');
-    ctaForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const fd = new FormData(ctaForm);
-      const email = String(fd.get('email') ?? '').trim().toLowerCase();
-      const params = new URLSearchParams();
-      if (email) params.set('email', email);
-      window.location.href = `${APP_URL}/signup?${params.toString()}`;
-    });
-
-    const contactForm = document.getElementById('contact-form');
-    contactForm?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      contactForm.innerHTML = `
-        <div style="padding:36px;background:#FFFFFF;border:1px solid #E7E5E0;border-radius:14px;text-align:center;">
-          <div style="display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:#BBF7D0;color:#166534;margin-bottom:16px;">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    // Shared "inbox check" success state HTML
+    function inboxSuccessHTML(email) {
+      return `
+        <div style="text-align:center;padding:8px 0;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:50%;background:#BBF7D0;color:#166534;margin-bottom:18px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="4" width="20" height="16" rx="2"/>
+              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+            </svg>
           </div>
-          <div style="font-size:18px;font-weight:700;letter-spacing:-0.4px;color:#0A0A0B;margin-bottom:6px;">Message received</div>
-          <div style="font-size:14px;color:#27272A;line-height:1.6;max-width:320px;margin:0 auto;">
-            Thanks — we'll reply within one working day. Watch your inbox.
+          <div style="font-size:19px;font-weight:700;letter-spacing:-0.4px;color:#0A0A0B;margin-bottom:8px;">Check your inbox</div>
+          <div style="font-size:14px;color:#27272A;line-height:1.65;max-width:340px;margin:0 auto;">
+            We sent a sign-up link to <strong>${email}</strong>. Click it to set up your school — it expires in 15 minutes.
           </div>
         </div>
       `;
+    }
+
+    // Hero form: email → magic link → inline success
+    const heroForm = document.getElementById('hero-form');
+    heroForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(heroForm);
+      const email = String(fd.get('email') ?? '').trim().toLowerCase();
+      if (!email) return;
+
+      const btn = document.getElementById('hero-submit');
+      const note = document.getElementById('hero-note');
+      if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+      if (note) note.style.display = 'none';
+
+      try {
+        const res = await fetch(`${API_URL}/api/auth/sign-in/magic-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, callbackURL: `${APP_URL}/onboarding` }),
+        });
+        if (res.ok) {
+          heroForm.innerHTML = inboxSuccessHTML(email);
+        } else {
+          if (btn) { btn.textContent = 'Get started free →'; btn.disabled = false; }
+          if (note) { note.textContent = 'Something went wrong — try again.'; note.style.display = ''; note.style.color = '#BE185D'; }
+        }
+      } catch {
+        if (btn) { btn.textContent = 'Get started free →'; btn.disabled = false; }
+        if (note) { note.textContent = 'Something went wrong — try again.'; note.style.display = ''; note.style.color = '#BE185D'; }
+      }
+    });
+
+    // Final CTA form: email → magic link → inline success
+    const ctaForm = document.getElementById('cta-form');
+    ctaForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(ctaForm);
+      const email = String(fd.get('email') ?? '').trim().toLowerCase();
+      if (!email) return;
+
+      const btn = ctaForm.querySelector('[type="submit"]');
+      if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+
+      try {
+        const res = await fetch(`${API_URL}/api/auth/sign-in/magic-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, callbackURL: `${APP_URL}/onboarding` }),
+        });
+        if (res.ok) {
+          const successDiv = document.createElement('div');
+          successDiv.innerHTML = inboxSuccessHTML(email);
+          successDiv.style.cssText = 'max-width:420px;margin:0 auto;';
+          ctaForm.replaceWith(successDiv);
+        } else {
+          if (btn) { btn.textContent = 'Get started free →'; btn.disabled = false; }
+        }
+      } catch {
+        if (btn) { btn.textContent = 'Get started free →'; btn.disabled = false; }
+      }
+    });
+
+    // Contact form: POST to /api/contact → acknowledgement email + inline success
+    const contactForm = document.getElementById('contact-form');
+    contactForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(contactForm);
+      const btn = contactForm.querySelector('[type="submit"]');
+      if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+
+      try {
+        const res = await fetch(`${API_URL}/api/contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: String(fd.get('name') ?? '').trim(),
+            school: String(fd.get('school') ?? '').trim(),
+            email: String(fd.get('email') ?? '').trim().toLowerCase(),
+            role: String(fd.get('role') ?? '').trim(),
+            message: String(fd.get('message') ?? '').trim(),
+          }),
+        });
+        if (res.ok) {
+          contactForm.innerHTML = `
+            <div style="padding:36px;background:#FFFFFF;border:1px solid #E7E5E0;border-radius:14px;text-align:center;">
+              <div style="display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:50%;background:#BBF7D0;color:#166534;margin-bottom:16px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              </div>
+              <div style="font-size:18px;font-weight:700;letter-spacing:-0.4px;color:#0A0A0B;margin-bottom:6px;">Message received</div>
+              <div style="font-size:14px;color:#27272A;line-height:1.6;max-width:320px;margin:0 auto;">
+                We've sent a confirmation to your inbox and will reply within one working day.
+              </div>
+            </div>
+          `;
+        } else {
+          if (btn) { btn.textContent = 'Send message →'; btn.disabled = false; }
+        }
+      } catch {
+        if (btn) { btn.textContent = 'Send message →'; btn.disabled = false; }
+      }
     });
   </script>
 </Layout>

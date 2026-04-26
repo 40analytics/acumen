@@ -50,11 +50,16 @@ export default function Promotion() {
   return (
     <AppShell>
       <div className="container-page py-10">
-        <div className="flex items-end justify-between flex-wrap gap-3 mb-8">
+        <div className="flex items-end justify-between flex-wrap gap-3 mb-6">
           <div>
-            <span className="text-[12px] font-semibold text-muted uppercase tracking-wider">
-              — Promotion eligibility
-            </span>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[12px] font-semibold text-muted uppercase tracking-wider">
+                — Promotion eligibility
+              </span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-honey-soft text-honey border border-honey/20">
+                IGCSE only
+              </span>
+            </div>
             <h1 className="text-[32px] font-bold tracking-tightest leading-[1.1] mt-2">
               IGCSE promotion analysis
             </h1>
@@ -85,6 +90,16 @@ export default function Promotion() {
               </a>
             </Button>
           </div>
+        </div>
+
+        {/* IGCSE-only callout */}
+        <div className="flex items-start gap-3 mb-8 px-4 py-3.5 rounded-lg bg-honey-soft border border-honey/20 text-[13.5px] text-ink-soft max-w-[680px]">
+          <GraduationCap size={16} className="text-honey mt-0.5 flex-shrink-0" />
+          <span>
+            Promotion eligibility is assessed using{' '}
+            <strong className="text-ink">IGCSE results only</strong>. A Level data is visible in
+            the A Level analytics section but is not included in promotion calculations.
+          </span>
         </div>
 
         {/* Summary cards */}

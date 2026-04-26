@@ -23,6 +23,8 @@ export const createOrgWithWorkspaceSchema = z.object({
   orgName: z.string().min(2).max(80).trim(),
   workspaceName: z.string().min(2).max(80).trim(),
   workspaceSlug: slugSchema,
+  /** ISO 3166-1 alpha-2 country code for the school (e.g. "GH") */
+  countryCode: z.string().length(2).optional().or(z.literal('')),
   /** Optional email domain to claim for this org (e.g. "school.edu") */
   emailDomain: z
     .string()
@@ -31,6 +33,12 @@ export const createOrgWithWorkspaceSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/, 'Enter a valid domain')
     .optional()
     .or(z.literal('')),
+  /** User's display name (saved to users.name) */
+  userName: z.string().min(1).max(80).trim().optional().or(z.literal('')),
+  /** User's phone number */
+  userPhone: z.string().max(40).trim().optional().or(z.literal('')),
+  /** User's job title at this school */
+  userJobTitle: z.string().max(80).trim().optional().or(z.literal('')),
 });
 
 export const inviteMemberSchema = z.object({

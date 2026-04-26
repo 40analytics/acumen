@@ -1,11 +1,13 @@
 import { useState, useRef, type DragEvent, type FormEvent } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { apiClient, ApiError } from '@/lib/api';
-import { UploadCloud, FileSpreadsheet, X, Check, AlertTriangle, Trash2 } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, X, Check, AlertTriangle, Trash2, CheckCircle2 } from 'lucide-react';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -25,9 +27,14 @@ interface UploadRow {
   createdAt: string;
 }
 
+interface UploadSuccess {
+  rowsParsed: number;
+  balanceAfter: number;
+  examType: 'IGCSE' | 'A Level';
+}
+
 export default function Upload() {
   const { tenantSlug } = useParams();
-  const navigate = useNavigate();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -36,11 +43,18 @@ export default function Upload() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<UploadRow | null>(null);
+  const [lastSuccess, setLastSuccess] = useState<UploadSuccess | null>(null);
 
   const { data: list, refetch } = useQuery({
     queryKey: ['uploads', tenantSlug],
     queryFn: () => apiClient.get<{ uploads: UploadRow[] }>(`/api/t/${tenantSlug}/uploads`),
     enabled: !!tenantSlug,
+    // Poll every 5 s while any upload is still processing
+    refetchInterval: (query) => {
+      const uploads = query.state.data?.uploads;
+      return uploads?.some((u) => u.status === 'processing') ? 5_000 : false;
+    },
   });
 
   const upload = useMutation({
@@ -71,16 +85,16 @@ export default function Upload() {
       qc.invalidateQueries({ queryKey: ['billing-balance', tenantSlug] });
       refetch();
       setFile(null);
-      // Bounce to analytics
-      navigate(
-        `/${tenantSlug}/analytics/${examType === 'IGCSE' ? 'igcse' : 'alevel'}?from=upload`
-      );
+      setLastSuccess({ rowsParsed: data.rowsParsed, balanceAfter: data.balanceAfter, examType });
     },
     onError: (err) => {
       if (err instanceof ApiError && (err as any).status === 402) {
         setError('You have no upload credits left. Top up to continue.');
+        toast.error('No upload credits remaining — top up to continue');
       } else {
-        setError(err instanceof Error ? err.message : 'Upload failed');
+        const msg = err instanceof Error ? err.message : 'Upload failed';
+        setError(msg);
+        toast.error(msg);
       }
     },
   });
@@ -90,6 +104,12 @@ export default function Upload() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tenant', tenantSlug] });
       refetch();
+      setDeleteTarget(null);
+      toast.success('Upload deleted — credit refunded');
+    },
+    onError: () => {
+      setDeleteTarget(null);
+      toast.error('Failed to delete upload');
     },
   });
 
@@ -298,6 +318,40 @@ export default function Upload() {
           </div>
         </form>
 
+        {/* Success banner */}
+        {lastSuccess && (
+          <div className="mb-8 rounded-xl border border-sage/30 bg-sage-soft/40 px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="w-10 h-10 rounded-full bg-sage/20 text-sage flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 size={20} strokeWidth={2} />
+              </div>
+              <div>
+                <p className="text-[15px] font-semibold text-ink">
+                  {lastSuccess.rowsParsed.toLocaleString()} records parsed successfully
+                </p>
+                <p className="text-[13px] text-ink-soft mt-0.5">
+                  {lastSuccess.balanceAfter} upload credit{lastSuccess.balanceAfter !== 1 ? 's' : ''} remaining
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Link
+                to={`/${tenantSlug}/analytics/${lastSuccess.examType === 'IGCSE' ? 'igcse' : 'alevel'}`}
+                className="btn-primary text-[13.5px] px-4 py-2"
+              >
+                View analytics →
+              </Link>
+              <button
+                onClick={() => setLastSuccess(null)}
+                className="p-2 text-muted hover:text-ink rounded"
+                aria-label="Dismiss"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Recent uploads */}
         <div>
           <h2 className="text-[20px] font-bold tracking-tighter mb-5">Recent uploads</h2>
@@ -343,12 +397,9 @@ export default function Upload() {
                       </td>
                       <td className="px-5 py-3 text-right">
                         <button
-                          onClick={() => {
-                            if (confirm(`Delete ${u.fileName}? Your credit will be refunded.`)) {
-                              deleteUpload.mutate(u.id);
-                            }
-                          }}
+                          onClick={() => setDeleteTarget(u)}
                           className="text-muted hover:text-coral p-1.5 rounded"
+                          title="Delete upload"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -361,24 +412,46 @@ export default function Upload() {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        title="Delete upload?"
+        description={
+          deleteTarget
+            ? `Delete "${deleteTarget.fileName}"? This will remove all parsed records and refund 1 upload credit to your balance.`
+            : ''
+        }
+        confirmLabel="Delete"
+        variant="danger"
+        isPending={deleteUpload.isPending}
+        onConfirm={() => deleteTarget && deleteUpload.mutate(deleteTarget.id)}
+      />
     </AppShell>
   );
 }
 
 function StatusBadge({ status }: { status: 'processing' | 'processed' | 'failed' }) {
-  const map = {
-    processing: { bg: '#FEF3C7', fg: '#CA8A04', label: 'Processing' },
-    processed: { bg: '#BBF7D0', fg: '#166534', label: 'Processed', icon: <Check size={11} /> },
-    failed: { bg: '#FBCFE8', fg: '#BE185D', label: 'Failed' },
-  } as const;
-  const s = map[status];
+  if (status === 'processed')
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-[#BBF7D0] text-[#166534]">
+        <Check size={11} />
+        Processed
+      </span>
+    );
+  if (status === 'processing')
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded bg-[#FEF3C7] text-[#CA8A04]">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#CA8A04] opacity-60" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-[#CA8A04]" />
+        </span>
+        Processing
+      </span>
+    );
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded"
-      style={{ background: s.bg, color: s.fg }}
-    >
-      {('icon' in s && s.icon) || null}
-      {s.label}
+    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-[#FBCFE8] text-[#BE185D]">
+      Failed
     </span>
   );
 }

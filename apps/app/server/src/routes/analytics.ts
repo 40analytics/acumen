@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, count, countDistinct, eq, ilike, isNotNull, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { comprehensiveResults, summaryResults } from '../db/schema.js';
+import {
+  comprehensiveResults,
+  summaryResults,
+  teachers,
+  teacherSubjects,
+} from '../db/schema.js';
 import { type AppEnv } from '../middleware/auth.js';
 import type { ExamType } from '@acumen/shared';
 
@@ -31,6 +36,7 @@ async function fetchGrades(args: {
   tenantId: string;
   examType: ExamType;
   year?: number;
+  period?: string; // ISO date — filters to exact exam session
 }): Promise<GradeRow[]> {
   const compConditions = [
     eq(comprehensiveResults.tenantId, args.tenantId),
@@ -40,7 +46,11 @@ async function fetchGrades(args: {
     eq(summaryResults.tenantId, args.tenantId),
     eq(summaryResults.examType, args.examType),
   ];
-  if (args.year) {
+
+  if (args.period) {
+    compConditions.push(eq(comprehensiveResults.period, args.period));
+    sumConditions.push(eq(summaryResults.period, args.period));
+  } else if (args.year) {
     compConditions.push(sql`EXTRACT(YEAR FROM ${comprehensiveResults.period}) = ${args.year}`);
     sumConditions.push(sql`EXTRACT(YEAR FROM ${summaryResults.period}) = ${args.year}`);
   }
@@ -96,18 +106,262 @@ function gradeDistribution(rows: { grade: string }[]) {
   return order.map((g) => ({ grade: g, count: dist[g] ?? 0 }));
 }
 
-/**
- * GET /api/t/:tenantSlug/analytics/:examType?year=2024
- * Returns the full dashboard payload for IGCSE or A Level.
- */
-analyticsRouter.get('/:examType', async (c) => {
+function formatPeriod(iso: string): string {
+  const d = new Date(iso);
+  const month = d.toLocaleString('en-US', { month: 'short' });
+  return `${month} ${d.getFullYear()}`;
+}
+
+function parseExamType(param: string): ExamType {
+  return param === 'alevel' || param === 'a-level' ? 'A Level' : 'IGCSE';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/t/:tenantSlug/analytics/:examType/periods
+// Returns the distinct exam sessions that have data (for the period selector).
+// ─────────────────────────────────────────────────────────────────────────────
+analyticsRouter.get('/:examType/periods', async (c) => {
   const tenant = c.get('tenant')!;
-  const examTypeParam = c.req.param('examType');
-  const examType: ExamType =
-    examTypeParam === 'alevel' || examTypeParam === 'a-level' ? 'A Level' : 'IGCSE';
+  const examType = parseExamType(c.req.param('examType'));
+
+  // Fetch candidate counts per period from both result tables
+  const [compPeriods, sumPeriods] = await Promise.all([
+    db
+      .select({
+        period: comprehensiveResults.period,
+        candidates: countDistinct(comprehensiveResults.candidateNumber),
+      })
+      .from(comprehensiveResults)
+      .where(
+        and(
+          eq(comprehensiveResults.tenantId, tenant.tenantId),
+          eq(comprehensiveResults.examType, examType),
+          isNotNull(comprehensiveResults.period)
+        )
+      )
+      .groupBy(comprehensiveResults.period),
+    db
+      .select({
+        period: summaryResults.period,
+        candidates: countDistinct(summaryResults.candidateNumber),
+      })
+      .from(summaryResults)
+      .where(
+        and(
+          eq(summaryResults.tenantId, tenant.tenantId),
+          eq(summaryResults.examType, examType),
+          isNotNull(summaryResults.period)
+        )
+      )
+      .groupBy(summaryResults.period),
+  ]);
+
+  // Merge: take the max candidate count per period across both tables
+  const candidatesByPeriod = new Map<string, number>();
+  for (const r of [...compPeriods, ...sumPeriods]) {
+    if (!r.period) continue;
+    const key = r.period as string;
+    const existing = candidatesByPeriod.get(key) ?? 0;
+    candidatesByPeriod.set(key, Math.max(existing, Number(r.candidates)));
+  }
+
+  const periods = Array.from(candidatesByPeriod.entries())
+    .filter(([p]) => Boolean(p))
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([p, candidates]) => ({ period: p, label: formatPeriod(p), candidates }));
+
+  return c.json({ periods });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/t/:tenantSlug/analytics/students?q=...&examType=IGCSE&year=2024
+// Full-text candidate search across name + candidate number.
+// ─────────────────────────────────────────────────────────────────────────────
+analyticsRouter.get('/students', async (c) => {
+  const tenant = c.get('tenant')!;
+  const q = (c.req.query('q') ?? '').trim();
+  const examType = parseExamType(c.req.query('examType') ?? 'igcse');
   const year = c.req.query('year') ? parseInt(c.req.query('year')!, 10) : undefined;
 
-  const rows = await fetchGrades({ tenantId: tenant.tenantId, examType, year });
+  if (q.length < 2) return c.json({ candidates: [] });
+
+  const searchPat = `%${q}%`;
+  const baseCompCond = [
+    eq(comprehensiveResults.tenantId, tenant.tenantId),
+    eq(comprehensiveResults.examType, examType),
+    or(
+      ilike(comprehensiveResults.candidateName, searchPat),
+      ilike(comprehensiveResults.candidateNumber, searchPat)
+    )!,
+  ];
+  const baseSumCond = [
+    eq(summaryResults.tenantId, tenant.tenantId),
+    eq(summaryResults.examType, examType),
+    or(
+      ilike(summaryResults.candidateName, searchPat),
+      ilike(summaryResults.candidateNumber, searchPat)
+    )!,
+  ];
+  if (year) {
+    baseCompCond.push(sql`EXTRACT(YEAR FROM ${comprehensiveResults.period}) = ${year}`);
+    baseSumCond.push(sql`EXTRACT(YEAR FROM ${summaryResults.period}) = ${year}`);
+  }
+
+  const [compRows, sumRows] = await Promise.all([
+    db
+      .select({
+        candidateNumber: comprehensiveResults.candidateNumber,
+        candidateName: comprehensiveResults.candidateName,
+        subject: comprehensiveResults.syllabus,
+        syllabusCode: comprehensiveResults.syllabus,
+        grade: comprehensiveResults.syllabusGrade,
+        period: comprehensiveResults.period,
+      })
+      .from(comprehensiveResults)
+      .where(and(...baseCompCond))
+      .limit(500),
+    db
+      .select({
+        candidateNumber: summaryResults.candidateNumber,
+        candidateName: summaryResults.candidateName,
+        subject: summaryResults.subject,
+        syllabusCode: summaryResults.syllabusCode,
+        grade: summaryResults.grade,
+        period: summaryResults.period,
+      })
+      .from(summaryResults)
+      .where(and(...baseSumCond))
+      .limit(500),
+  ]);
+
+  // Group by candidate
+  const byCandidate = new Map<
+    string,
+    {
+      candidateNumber: string;
+      name: string;
+      subjects: { subject: string; syllabusCode: string | null; grade: string; period: string | null }[];
+    }
+  >();
+
+  for (const r of [...compRows.filter((r) => r.grade), ...sumRows]) {
+    const key = `${r.candidateNumber}::${r.candidateName}`;
+    const cur = byCandidate.get(key) ?? {
+      candidateNumber: r.candidateNumber,
+      name: r.candidateName,
+      subjects: [],
+    };
+    cur.subjects.push({
+      subject: r.subject,
+      syllabusCode: r.syllabusCode,
+      grade: r.grade as string,
+      period: r.period as string | null,
+    });
+    byCandidate.set(key, cur);
+  }
+
+  const candidates = Array.from(byCandidate.values())
+    .map((c) => {
+      const aStars = c.subjects.filter((s) => s.grade === 'A*').length;
+      const weighted = c.subjects.reduce((sum, s) => sum + (GRADE_WEIGHT[s.grade] ?? 0), 0);
+      const passedC = c.subjects.filter((s) => PASS_GRADES_C.has(s.grade)).length;
+      return {
+        ...c,
+        aStars,
+        weighted,
+        passRateC: c.subjects.length > 0 ? Math.round((passedC / c.subjects.length) * 100) : 0,
+        // sort subjects by period desc, then subject name
+        subjects: c.subjects.sort((a, b) => {
+          if (a.period && b.period) return b.period.localeCompare(a.period);
+          return a.subject.localeCompare(b.subject);
+        }),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const total = candidates.length;
+  const limited = candidates.slice(0, 100);
+
+  return c.json({ candidates: limited, total, examType, q });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/t/:tenantSlug/analytics/teachers?examType=IGCSE&year=2024
+// Cross-references teacher subject assignments with result data.
+// ─────────────────────────────────────────────────────────────────────────────
+analyticsRouter.get('/teachers', async (c) => {
+  const tenant = c.get('tenant')!;
+  const examType = parseExamType(c.req.query('examType') ?? 'igcse');
+  const year = c.req.query('year') ? parseInt(c.req.query('year')!, 10) : undefined;
+
+  const [teacherRows, subjectRows, rows] = await Promise.all([
+    db.select().from(teachers).where(eq(teachers.tenantId, tenant.tenantId)),
+    db
+      .select()
+      .from(teacherSubjects)
+      .where(
+        and(eq(teacherSubjects.tenantId, tenant.tenantId), eq(teacherSubjects.examType, examType))
+      ),
+    fetchGrades({ tenantId: tenant.tenantId, examType, year }),
+  ]);
+
+  // Build syllabus-code → grade rows map
+  const byCode = new Map<string, { grade: string }[]>();
+  for (const r of rows) {
+    const code = r.syllabusCode ?? r.subject;
+    if (!code) continue;
+    const cur = byCode.get(code) ?? [];
+    cur.push({ grade: r.grade });
+    byCode.set(code, cur);
+  }
+
+  // Build teacher → subjects
+  const subjectsByTeacher = new Map<string, typeof subjectRows>();
+  for (const s of subjectRows) {
+    const cur = subjectsByTeacher.get(s.teacherId) ?? [];
+    cur.push(s);
+    subjectsByTeacher.set(s.teacherId, cur);
+  }
+
+  const result = teacherRows
+    .map((t) => {
+      const assignedSubjects = subjectsByTeacher.get(t.id) ?? [];
+      const subjectStats = assignedSubjects.map((s) => {
+        const grades = byCode.get(s.syllabusCode) ?? [];
+        return {
+          syllabusCode: s.syllabusCode,
+          students: grades.length,
+          passRateAA: passRate(grades, PASS_GRADES_AA),
+          passRateC: passRate(grades, PASS_GRADES_C),
+          isPrimary: s.isPrimaryTeacher,
+        };
+      });
+      return {
+        id: t.id,
+        name: `${t.firstName} ${t.lastName}`,
+        department: t.department,
+        position: t.position,
+        subjects: subjectStats,
+        totalStudents: subjectStats.reduce((sum, s) => sum + s.students, 0),
+      };
+    })
+    .filter((t) => t.subjects.length > 0)
+    .sort((a, b) => b.totalStudents - a.totalStudents);
+
+  return c.json({ teachers: result, examType, year });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/t/:tenantSlug/analytics/:examType?year=2024&period=2024-06-01
+// Full analytics dashboard payload.
+// ─────────────────────────────────────────────────────────────────────────────
+analyticsRouter.get('/:examType', async (c) => {
+  const tenant = c.get('tenant')!;
+  const examType = parseExamType(c.req.param('examType'));
+  const year = c.req.query('year') ? parseInt(c.req.query('year')!, 10) : undefined;
+  const period = c.req.query('period') ?? undefined;
+
+  const rows = await fetchGrades({ tenantId: tenant.tenantId, examType, year, period });
 
   // Top students — group by candidate, compute weighted score and A* count
   const byCandidate = new Map<
@@ -159,10 +413,10 @@ analyticsRouter.get('/:examType', async (c) => {
   // Timeline — group by period
   const byPeriod = new Map<string, { period: string; rows: { grade: string }[] }>();
   for (const r of rows) {
-    const period = r.period ?? 'unknown';
-    const cur = byPeriod.get(period) ?? { period, rows: [] };
+    const p = r.period ?? 'unknown';
+    const cur = byPeriod.get(p) ?? { period: p, rows: [] };
     cur.rows.push({ grade: r.grade });
-    byPeriod.set(period, cur);
+    byPeriod.set(p, cur);
   }
   const timeline = Array.from(byPeriod.values())
     .map((p) => ({
@@ -177,6 +431,7 @@ analyticsRouter.get('/:examType', async (c) => {
   return c.json({
     examType,
     year,
+    period,
     overview: {
       totalRecords: rows.length,
       uniqueCandidates: byCandidate.size,
@@ -194,19 +449,7 @@ analyticsRouter.get('/:examType', async (c) => {
   });
 });
 
-function formatPeriod(iso: string): string {
-  const d = new Date(iso);
-  const month = d.toLocaleString('en-US', { month: 'short' });
-  return `${month} ${d.getFullYear()}`;
-}
-
 // ─── PROMOTION ELIGIBILITY ─────────────────────────────
-// Cambridge IGCSE promotion rules (defaults — schools can override later):
-// - At least 5 subjects passed at C or above
-// - English (any code matching 05xx or named 'English Language') passed at C+
-// - Mathematics (0580 or named 'Mathematics') passed at C+
-// - At least one Science (Biology/Chemistry/Physics/Combined Sciences/Co-ordinated Sciences) passed at C+
-
 const ENG_NAMES = /english\s*language|first\s*language\s*english/i;
 const ENG_CODES = /^05(00|10)$/;
 const MATH_NAMES = /^mathematics$|extended\s*mathematics/i;
@@ -230,18 +473,6 @@ function classifySubject(g: CandidateGrade): 'english' | 'math' | 'science' | 'o
   return 'other';
 }
 
-interface PromotionResult {
-  candidateNumber: string;
-  candidateName: string;
-  totalSubjects: number;
-  totalPassed: number;
-  hasEnglish: boolean;
-  hasMath: boolean;
-  hasScience: boolean;
-  eligible: boolean;
-  reasons: string[];
-}
-
 analyticsRouter.get('/promotion/igcse', async (c) => {
   const tenant = c.get('tenant')!;
   const year = c.req.query('year') ? parseInt(c.req.query('year')!, 10) : undefined;
@@ -256,9 +487,9 @@ analyticsRouter.get('/promotion/igcse', async (c) => {
     byCandidate.set(key, cur);
   }
 
-  const results: PromotionResult[] = [];
-  for (const [key, c] of byCandidate.entries()) {
-    const passed = c.grades.filter((g) => PASSING_GRADES.has(g.grade));
+  const results = [];
+  for (const [key, cand] of byCandidate.entries()) {
+    const passed = cand.grades.filter((g) => PASSING_GRADES.has(g.grade));
     const buckets = passed.map(classifySubject);
     const hasEnglish = buckets.includes('english');
     const hasMath = buckets.includes('math');
@@ -270,8 +501,8 @@ analyticsRouter.get('/promotion/igcse', async (c) => {
     if (!hasScience) reasons.push('Missing C+ in any Science');
     results.push({
       candidateNumber: key.split('::')[0],
-      candidateName: c.name,
-      totalSubjects: c.grades.length,
+      candidateName: cand.name,
+      totalSubjects: cand.grades.length,
       totalPassed: passed.length,
       hasEnglish,
       hasMath,

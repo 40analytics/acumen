@@ -15,6 +15,8 @@ import {
   GraduationCap,
   BookOpen,
   Award,
+  Search as SearchIcon,
+  BarChart2,
   CreditCard,
   Users as UsersIcon,
   UserSquare2,
@@ -49,6 +51,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useSidebarCollapsed();
 
+  // Auto-close mobile sidebar whenever the route changes
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
   const { data: me } = useQuery({
     queryKey: ['me'],
     queryFn: () => apiClient.get<MeData>('/api/me'),
@@ -58,6 +65,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryFn: () =>
       apiClient.get<{ credits: { balance: number } }>(`/api/t/${tenantSlug}`),
     enabled: !!tenantSlug,
+    // Override global default so credits update when user returns from a separate tab
+    refetchOnWindowFocus: true,
   });
 
   const currentTenant = me?.tenants.find((t) => t.slug === tenantSlug);
@@ -152,6 +161,20 @@ export function AppShell({ children }: { children: ReactNode }) {
                 href={`/${tenantSlug}/analytics/promotion`}
                 label="Promotion"
                 icon={<Award size={17} strokeWidth={1.9} />}
+                collapsed={collapsed}
+                onClick={() => setMobileOpen(false)}
+              />
+              <NavItem
+                href={`/${tenantSlug}/analytics/students`}
+                label="Students"
+                icon={<SearchIcon size={17} strokeWidth={1.9} />}
+                collapsed={collapsed}
+                onClick={() => setMobileOpen(false)}
+              />
+              <NavItem
+                href={`/${tenantSlug}/analytics/teachers`}
+                label="Teachers"
+                icon={<BarChart2 size={17} strokeWidth={1.9} />}
                 collapsed={collapsed}
                 onClick={() => setMobileOpen(false)}
               />

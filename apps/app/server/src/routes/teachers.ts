@@ -74,6 +74,41 @@ teachersRouter.post('/', zValidator('json', teacherSchema), async (c) => {
   return c.json({ teacher: created }, 201);
 });
 
+/**
+ * POST /teachers/bulk — import multiple teachers in one request.
+ * Skips duplicates by email (if email provided and already exists for tenant).
+ */
+teachersRouter.post(
+  '/bulk',
+  zValidator('json', z.object({ teachers: z.array(teacherSchema).min(1).max(200) })),
+  async (c) => {
+    const tenant = c.get('tenant')!;
+    requireRole(tenant, 'admin');
+    const { teachers: input } = c.req.valid('json');
+
+    const rows = await db
+      .insert(teachers)
+      .values(
+        input.map((t) => ({
+          tenantId: tenant.tenantId,
+          firstName: t.firstName,
+          lastName: t.lastName,
+          email: t.email ?? null,
+          phone: t.phone ?? null,
+          employeeId: t.employeeId ?? null,
+          department: t.department ?? null,
+          position: t.position ?? null,
+          dateJoined: t.dateJoined ?? null,
+          notes: t.notes ?? null,
+        }))
+      )
+      .onConflictDoNothing()
+      .returning();
+
+    return c.json({ imported: rows.length }, 201);
+  }
+);
+
 teachersRouter.patch('/:id', zValidator('json', teacherSchema.partial()), async (c) => {
   const tenant = c.get('tenant')!;
   requireRole(tenant, 'admin');

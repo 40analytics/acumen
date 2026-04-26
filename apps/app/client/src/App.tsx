@@ -23,6 +23,9 @@ import ImpersonationPreview from '@/pages/__preview/ImpersonationPreview';
 import Promotion from '@/pages/Promotion';
 import SettingsTeachers from '@/pages/SettingsTeachers';
 import SettingsNomenclature from '@/pages/SettingsNomenclature';
+import StudentSearch from '@/pages/StudentSearch';
+import TeacherAnalytics from '@/pages/TeacherAnalytics';
+import NotFound from '@/pages/NotFound';
 import PromotionPreview from '@/pages/__preview/PromotionPreview';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
@@ -100,10 +103,15 @@ export default function App() {
         path="/:tenantSlug/analytics/students"
         element={
           <ProtectedRoute>
-            <Placeholder
-              title="Student analytics"
-              body="Search any student to see their full academic record, subject breakdown, and cohort comparison."
-            />
+            <StudentSearch />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:tenantSlug/analytics/teachers"
+        element={
+          <ProtectedRoute>
+            <TeacherAnalytics />
           </ProtectedRoute>
         }
       />
@@ -156,6 +164,10 @@ export default function App() {
         }
       />
       {/* Back-compat: old nested /settings/* paths redirect to flat routes */}
+      <Route
+        path="/:tenantSlug/settings/general"
+        element={<RedirectToFlat segment="settings" />}
+      />
       <Route
         path="/:tenantSlug/settings/team"
         element={<RedirectToFlat segment="team" />}
@@ -214,7 +226,15 @@ export default function App() {
       )}
 
       <Route path="/" element={<Navigate to="/signin" replace />} />
-      <Route path="*" element={<Navigate to="/signin" replace />} />
+      {/* Authenticated 404 — unauthenticated users still redirect to sign in via ProtectedRoute */}
+      <Route
+        path="*"
+        element={
+          <ProtectedRoute>
+            <NotFound />
+          </ProtectedRoute>
+        }
+      />
     </Routes>
   );
 }

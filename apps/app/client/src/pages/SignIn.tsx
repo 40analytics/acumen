@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState, useEffect, type FormEvent } from 'react';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
@@ -13,10 +13,25 @@ type Status = 'idle' | 'sending' | 'sent' | 'error';
 
 export default function SignIn() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const errorParam = params.get('error');
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(errorParam);
+
+  // Clear the ?error= param from the URL so it doesn't linger if the user retries
+  useEffect(() => {
+    if (errorParam) {
+      navigate('/signin', { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function sendMagicLink(emailAddress: string) {
+    await authClient.signIn.magicLink({
+      email: emailAddress.trim().toLowerCase(),
+      callbackURL: window.location.origin + '/onboarding',
+    });
+  }
 
   async function handleEmailSignIn(e: FormEvent) {
     e.preventDefault();
@@ -24,10 +39,7 @@ export default function SignIn() {
     setStatus('sending');
     setErrorMsg(null);
     try {
-      await authClient.signIn.magicLink({
-        email: email.trim().toLowerCase(),
-        callbackURL: window.location.origin + '/onboarding',
-      });
+      await sendMagicLink(email);
       setStatus('sent');
     } catch (err: any) {
       setStatus('error');
@@ -81,7 +93,11 @@ export default function SignIn() {
         <div className="w-full max-w-[420px]">
           <div className="bg-surface border border-border rounded-xl p-8 sm:p-10 shadow-sm">
             {status === 'sent' ? (
-              <SentState email={email} onBack={() => setStatus('idle')} />
+              <SentState
+                email={email}
+                onBack={() => setStatus('idle')}
+                onResend={() => sendMagicLink(email)}
+              />
             ) : (
               <>
                 <div className="mb-8">
@@ -175,7 +191,27 @@ export default function SignIn() {
   );
 }
 
-function SentState({ email, onBack }: { email: string; onBack: () => void }) {
+function SentState({
+  email,
+  onBack,
+  onResend,
+}: {
+  email: string;
+  onBack: () => void;
+  onResend: () => Promise<void>;
+}) {
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  async function handleResend() {
+    setResendState('sending');
+    try {
+      await onResend();
+      setResendState('sent');
+    } catch {
+      setResendState('idle');
+    }
+  }
+
   return (
     <div className="text-center">
       <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-sage-soft text-sage mb-5">
@@ -188,12 +224,27 @@ function SentState({ email, onBack }: { email: string; onBack: () => void }) {
         We sent a sign-in link to
       </p>
       <p className="text-[14.5px] font-semibold text-ink mb-6 break-all">{email}</p>
-      <p className="text-[13px] text-muted leading-relaxed mb-6">
+      <p className="text-[13px] text-muted leading-relaxed mb-5">
         The link expires in 15 minutes. If you don't see it, check your spam folder.
       </p>
-      <Button variant="ghost" size="sm" onClick={onBack} type="button">
-        ← Use a different email
-      </Button>
+      <div className="flex flex-col gap-2">
+        {resendState === 'sent' ? (
+          <p className="text-[13px] text-sage font-semibold">Email resent ✓</p>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleResend}
+            disabled={resendState === 'sending'}
+            type="button"
+          >
+            {resendState === 'sending' ? 'Resending…' : 'Resend email'}
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" onClick={onBack} type="button">
+          ← Use a different email
+        </Button>
+      </div>
     </div>
   );
 }

@@ -1,77 +1,35 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { authClient } from '@/lib/auth-client';
-import { COUNTRIES } from '@acumen/shared';
 
 const MARKETING_URL =
   (import.meta.env.VITE_MARKETING_URL as string | undefined) ?? '/';
 
-const COUNTRY_TO_DIAL: Record<string, string> = COUNTRIES.reduce(
-  (acc, c) => ({ ...acc, [c.iso]: c.dial }),
-  {} as Record<string, string>
-);
-
 type Status = 'idle' | 'sending' | 'sent' | 'error';
 
 export default function SignUp() {
-  const [params] = useSearchParams();
-
-  const [name, setName] = useState(params.get('name')?.trim() ?? '');
-  const [school, setSchool] = useState(params.get('school')?.trim() ?? '');
-  const [email, setEmail] = useState(params.get('email')?.trim().toLowerCase() ?? '');
-  const [country, setCountry] = useState(params.get('country')?.trim() ?? '');
-  // Phone: prefer "+233 24 …" if marketing passed it, else split country code from input
-  const initialPhone = params.get('phone')?.trim() ?? '';
-  const phoneSplitMatch = initialPhone.match(/^(\+\d{1,4})\s*(.*)$/);
-  const [phoneCode, setPhoneCode] = useState(phoneSplitMatch?.[1] ?? '+233');
-  const [phone, setPhone] = useState(phoneSplitMatch?.[2] ?? '');
-
+  const [email, setEmail] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Whenever the user picks a country, snap the phone code to match
-  useEffect(() => {
-    if (country && COUNTRY_TO_DIAL[country]) setPhoneCode(COUNTRY_TO_DIAL[country]);
-  }, [country]);
-
-  function buildCallbackURL() {
-    const cb = new URLSearchParams();
-    if (school.trim()) cb.set('school', school.trim());
-    if (name.trim()) cb.set('name', name.trim());
-    if (country) cb.set('country', country);
-    const fullPhone = phone.trim() ? `${phoneCode} ${phone.trim()}` : '';
-    if (fullPhone) cb.set('phone', fullPhone);
-    // Absolute URL — Better Auth resolves relative paths against its own
-    // baseURL (the API host), so we have to point at the app explicitly.
-    return (
-      window.location.origin +
-      '/onboarding' +
-      (cb.toString() ? `?${cb.toString()}` : '')
-    );
-  }
-
-  function validateRequired(): boolean {
-    if (!name.trim() || !school.trim() || !email.trim()) {
-      setErrorMsg('Please fill name, school and email.');
-      return false;
-    }
-    return true;
+  async function sendMagicLink(emailAddress: string) {
+    await authClient.signIn.magicLink({
+      email: emailAddress.trim().toLowerCase(),
+      callbackURL: window.location.origin + '/onboarding',
+    });
   }
 
   async function handleEmailSignUp(e: FormEvent) {
     e.preventDefault();
+    if (!email.trim()) return;
     setErrorMsg(null);
-    if (!validateRequired()) return;
     setStatus('sending');
     try {
-      await authClient.signIn.magicLink({
-        email: email.trim().toLowerCase(),
-        callbackURL: buildCallbackURL(),
-      });
+      await sendMagicLink(email);
       setStatus('sent');
     } catch (err: any) {
       setStatus('error');
@@ -81,13 +39,9 @@ export default function SignUp() {
 
   async function handleGoogleSignUp() {
     setErrorMsg(null);
-    if (!name.trim() || !school.trim()) {
-      setErrorMsg('Please fill your name and school first.');
-      return;
-    }
     await authClient.signIn.social({
       provider: 'google',
-      callbackURL: buildCallbackURL(),
+      callbackURL: window.location.origin + '/onboarding',
     });
   }
 
@@ -125,10 +79,14 @@ export default function SignUp() {
       </header>
 
       <main className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[480px]">
+        <div className="w-full max-w-[440px]">
           <div className="bg-surface border border-border rounded-xl p-8 sm:p-10 shadow-sm">
             {status === 'sent' ? (
-              <SentState email={email} onBack={() => setStatus('idle')} />
+              <SentState
+                email={email}
+                onBack={() => setStatus('idle')}
+                onResend={() => sendMagicLink(email)}
+              />
             ) : (
               <>
                 <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-accent bg-accent-soft px-3 py-1 rounded-full mb-5">
@@ -140,111 +98,42 @@ export default function SignUp() {
                   Create your account
                 </h1>
                 <p className="text-[14.5px] text-ink-soft leading-relaxed mb-7">
-                  Spin up an Acumen workspace for your school in under 60 seconds. Your first
-                  upload is on us — no card needed.
+                  Enter your work email and we'll send you a secure sign-up link. No password needed.
                 </p>
 
-                <form onSubmit={handleEmailSignUp} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor="name">Your name</Label>
-                      <Input
-                        id="name"
-                        type="text"
-                        autoComplete="name"
-                        autoFocus={!name}
-                        placeholder="Dr. Kwame Mensah"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        required
-                        disabled={status === 'sending'}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="school">School</Label>
-                      <Input
-                        id="school"
-                        type="text"
-                        autoComplete="organization"
-                        placeholder="Your school's name"
-                        value={school}
-                        onChange={(e) => setSchool(e.target.value)}
-                        required
-                        disabled={status === 'sending'}
-                      />
-                    </div>
-                  </div>
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  className="w-full mb-5"
+                  onClick={handleGoogleSignUp}
+                  type="button"
+                >
+                  <GoogleIcon />
+                  Continue with Google
+                </Button>
 
+                <div className="flex items-center gap-3 mb-5">
+                  <span className="flex-1 h-px bg-border" />
+                  <span className="text-[11px] font-medium text-faint uppercase tracking-wider">
+                    or
+                  </span>
+                  <span className="flex-1 h-px bg-border" />
+                </div>
+
+                <form onSubmit={handleEmailSignUp} className="space-y-4">
                   <div>
-                    <Label htmlFor="email">Email</Label>
+                    <Label htmlFor="email">Work email</Label>
                     <Input
                       id="email"
                       type="email"
                       autoComplete="email"
-                      placeholder="you@example.com"
+                      autoFocus
+                      placeholder="you@school.edu"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
                       disabled={status === 'sending'}
                     />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor="country">Country</Label>
-                      <select
-                        id="country"
-                        value={country}
-                        onChange={(e) => setCountry(e.target.value)}
-                        disabled={status === 'sending'}
-                        className="w-full px-4 py-3 rounded text-[14.5px] bg-surface border border-border text-ink outline-none focus:border-ink focus:shadow-focus disabled:opacity-60 appearance-none cursor-pointer"
-                        style={{
-                          backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>")`,
-                          backgroundRepeat: 'no-repeat',
-                          backgroundPosition: 'right 14px center',
-                          paddingRight: 38,
-                        }}
-                      >
-                        <option value="">Select country</option>
-                        {COUNTRIES.map((c) => (
-                          <option key={c.iso} value={c.iso}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <Label htmlFor="phone">Phone number</Label>
-                      <div className="flex rounded border border-border bg-surface focus-within:border-ink focus-within:shadow-focus transition-colors overflow-hidden">
-                        <select
-                          value={phoneCode}
-                          onChange={(e) => setPhoneCode(e.target.value)}
-                          aria-label="Country code"
-                          className="border-r border-border bg-surface-alt pl-3 pr-7 py-3 text-[14px] font-semibold text-ink outline-none cursor-pointer appearance-none flex-shrink-0"
-                          style={{
-                            backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12' fill='none' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3 5 6 8 9 5'/></svg>")`,
-                            backgroundRepeat: 'no-repeat',
-                            backgroundPosition: 'right 8px center',
-                          }}
-                        >
-                          {COUNTRIES.map((c) => (
-                            <option key={c.iso} value={c.dial}>
-                              {c.flag} {c.dial}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          id="phone"
-                          type="tel"
-                          autoComplete="tel-national"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="20 123 4567"
-                          disabled={status === 'sending'}
-                          className="flex-1 px-3 py-3 text-[14.5px] text-ink bg-surface outline-none placeholder:text-faint min-w-0"
-                        />
-                      </div>
-                    </div>
                   </div>
 
                   {errorMsg && (
@@ -258,36 +147,16 @@ export default function SignUp() {
                     variant="primary"
                     size="lg"
                     className="w-full"
-                    disabled={status === 'sending'}
+                    disabled={status === 'sending' || !email.trim()}
                   >
-                    {status === 'sending' ? 'Sending link…' : 'Create account →'}
+                    {status === 'sending' ? 'Sending link…' : 'Send sign-up link →'}
                   </Button>
                   <p className="text-[12px] text-faint text-center">
                     First upload free &nbsp;·&nbsp; No credit card required
                   </p>
                 </form>
 
-                <div className="flex items-center gap-3 my-5">
-                  <span className="flex-1 h-px bg-border" />
-                  <span className="text-[11px] font-medium text-faint uppercase tracking-wider">
-                    or
-                  </span>
-                  <span className="flex-1 h-px bg-border" />
-                </div>
-
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  className="w-full"
-                  onClick={handleGoogleSignUp}
-                  type="button"
-                  disabled={status === 'sending'}
-                >
-                  <GoogleIcon />
-                  Continue with Google
-                </Button>
-
-                <p className="text-[12px] text-faint text-center mt-6">
+                <p className="text-[12px] text-faint text-center mt-5">
                   By creating an account you agree to our{' '}
                   <Link to="/terms" className="text-ink-soft hover:text-ink underline-offset-2">
                     Terms
@@ -317,12 +186,33 @@ export default function SignUp() {
   );
 }
 
-function SentState({ email, onBack }: { email: string; onBack: () => void }) {
+function SentState({
+  email,
+  onBack,
+  onResend,
+}: {
+  email: string;
+  onBack: () => void;
+  onResend: () => Promise<void>;
+}) {
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  async function handleResend() {
+    setResendState('sending');
+    try {
+      await onResend();
+      setResendState('sent');
+    } catch {
+      setResendState('idle');
+    }
+  }
+
   return (
     <div className="text-center">
       <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-sage-soft text-sage mb-5">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
       </div>
       <h2 className="text-[22px] font-bold tracking-tightest mb-2">Check your inbox</h2>
@@ -330,12 +220,28 @@ function SentState({ email, onBack }: { email: string; onBack: () => void }) {
         We sent a sign-up link to
       </p>
       <p className="text-[14.5px] font-semibold text-ink mb-6 break-all">{email}</p>
-      <p className="text-[13px] text-muted leading-relaxed mb-6">
-        Open the link on this device to continue. The link expires in 15 minutes.
+      <p className="text-[13px] text-muted leading-relaxed mb-5">
+        Click the link to finish setting up your school. It expires in 15 minutes.
+        If you don't see it, check your spam folder.
       </p>
-      <Button variant="ghost" size="sm" onClick={onBack} type="button">
-        ← Use a different email
-      </Button>
+      <div className="flex flex-col gap-2">
+        {resendState === 'sent' ? (
+          <p className="text-[13px] text-sage font-semibold">Email resent ✓</p>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleResend}
+            disabled={resendState === 'sending'}
+            type="button"
+          >
+            {resendState === 'sending' ? 'Resending…' : 'Resend email'}
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" onClick={onBack} type="button">
+          ← Use a different email
+        </Button>
+      </div>
     </div>
   );
 }
