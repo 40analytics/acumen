@@ -49,8 +49,8 @@ See [`DEPLOY.md`](./DEPLOY.md) — branch-based deploys to Cloud Run via Cloud B
 
 | Branch | Marketing | App client | App API |
 |--------|-----------|------------|---------|
-| `main` | acumen.app | app.acumen.app | api.acumen.app |
-| `staging` | staging.acumen.app | app-staging.acumen.app | api-staging.acumen.app |
+| `main` | acumen.40analytics.com | app.acumen.40analytics.com | api.acumen.40analytics.com |
+| `staging` | staging.acumen.40analytics.com | app-staging.acumen.40analytics.com | api-staging.acumen.40analytics.com |
 
 ## Tech
 

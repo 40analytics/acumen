@@ -9,8 +9,8 @@ Runtime: **Cloud Run** — three services per env (marketing · app-client · ap
 
 | Branch | Cloud Build config | Cloud Run services | Public URLs |
 |--------|--------------------|--------------------|-------------|
-| `staging` | `cloudbuild-staging.yaml` | `acumen-marketing-staging`, `acumen-app-client-staging`, `acumen-app-server-staging` | `staging.acumen.app`, `app-staging.acumen.app`, `api-staging.acumen.app` |
-| `main` | `cloudbuild-prod.yaml` | `acumen-marketing-prod`, `acumen-app-client-prod`, `acumen-app-server-prod` | `acumen.app`, `app.acumen.app`, `api.acumen.app` |
+| `staging` | `cloudbuild-staging.yaml` | `acumen-marketing-staging`, `acumen-app-client-staging`, `acumen-app-server-staging` | `staging.acumen.40analytics.com`, `app-staging.acumen.40analytics.com`, `api-staging.acumen.40analytics.com` |
+| `main` | `cloudbuild-prod.yaml` | `acumen-marketing-prod`, `acumen-app-client-prod`, `acumen-app-server-prod` | `acumen.40analytics.com`, `app.acumen.40analytics.com`, `api.acumen.40analytics.com` |
 
 ## One-time GCP setup
 
@@ -108,12 +108,21 @@ gcloud builds triggers create github \
    DATABASE_URL="<staging-url>" npm run db:push
    ```
 3. Map custom domains in Cloud Run console (or `gcloud run domain-mappings create`):
-   - `acumen.app` → `acumen-marketing-prod`
-   - `app.acumen.app` → `acumen-app-client-prod`
-   - `api.acumen.app` → `acumen-app-server-prod`
-   - and the `staging.*` equivalents
-4. Update Paystack webhook URL → `https://api.acumen.app/api/paystack/webhook`
-5. Update Google OAuth → add `https://api.acumen.app/api/auth/callback/google` (and the staging equivalent) to authorized redirect URIs
+
+   **Production** (under `acumen.40analytics.com`)
+   - `acumen.40analytics.com` → `acumen-marketing-prod`
+   - `app.acumen.40analytics.com` → `acumen-app-client-prod`
+   - `api.acumen.40analytics.com` → `acumen-app-server-prod`
+
+   **Staging**
+   - `staging.acumen.40analytics.com` → `acumen-marketing-staging`
+   - `app-staging.acumen.40analytics.com` → `acumen-app-client-staging`
+   - `api-staging.acumen.40analytics.com` → `acumen-app-server-staging`
+
+   You'll also need to add CNAME records in your DNS for `40analytics.com` pointing the four prod hostnames (and three staging hostnames) at `ghs.googlehosted.com`.
+
+4. Update Paystack webhook URL → `https://api.acumen.40analytics.com/api/paystack/webhook` (and the staging equivalent)
+5. Update Google OAuth → add `https://api.acumen.40analytics.com/api/auth/callback/google` and `https://api-staging.acumen.40analytics.com/api/auth/callback/google` to authorized redirect URIs
 
 ## Local dev
 
