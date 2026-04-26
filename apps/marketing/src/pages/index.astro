@@ -1926,26 +1926,39 @@ const countries = [
       if (match) phoneCode.value = match.value;
     });
 
+    // App URL — read from <meta name="app-url"> if injected, else fall back
+    const APP_URL = document.querySelector('meta[name="app-url"]')?.getAttribute('content')
+      ?? 'http://localhost:5173';
+
+    // Hero form: collect lead data, hand off to /signup with prefill
     const heroForm = document.getElementById('hero-form');
     heroForm?.addEventListener('submit', (e) => {
       e.preventDefault();
-      heroForm.innerHTML = `
-        <div style="padding:32px;background:#0A0A0B;color:#EDF1E7;border-radius:10px;text-align:center;">
-          <div style="font-size:13px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:#CA8A04;margin-bottom:14px;">— Account created —</div>
-          <div style="font-size:18px;font-weight:600;letter-spacing:-0.4px;margin-bottom:8px;">Welcome to Acumen.</div>
-          <div style="font-size:14px;color:rgba(250,250,247,0.6);line-height:1.6;">Check your inbox to verify your email, then upload your first results file.</div>
-        </div>
-      `;
+      const fd = new FormData(heroForm);
+      const params = new URLSearchParams();
+      const email = String(fd.get('email') ?? '').trim().toLowerCase();
+      const school = String(fd.get('school') ?? '').trim();
+      const name = String(fd.get('name') ?? '').trim();
+      if (email) params.set('email', email);
+      if (school) params.set('school', school);
+      if (name) params.set('name', name);
+      const phoneCode = String(fd.get('phoneCode') ?? '').trim();
+      const phone = String(fd.get('phone') ?? '').trim();
+      if (phone) params.set('phone', `${phoneCode} ${phone}`.trim());
+      const country = String(fd.get('country') ?? '').trim();
+      if (country) params.set('country', country);
+      window.location.href = `${APP_URL}/signup?${params.toString()}`;
     });
 
+    // Final CTA form: just email — hand off to /signup
     const ctaForm = document.getElementById('cta-form');
     ctaForm?.addEventListener('submit', (e) => {
       e.preventDefault();
-      ctaForm.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:center;gap:14px;color:#CA8A04;font-size:14.5px;font-weight:600;letter-spacing:-0.1px;">
-          <span>Account created. Check your inbox to get started.</span>
-        </div>
-      `;
+      const fd = new FormData(ctaForm);
+      const email = String(fd.get('email') ?? '').trim().toLowerCase();
+      const params = new URLSearchParams();
+      if (email) params.set('email', email);
+      window.location.href = `${APP_URL}/signup?${params.toString()}`;
     });
 
     const contactForm = document.getElementById('contact-form');

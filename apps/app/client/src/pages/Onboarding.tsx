@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
@@ -9,8 +9,11 @@ import { slugSchema } from '@acumen/shared';
 
 export default function Onboarding() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const { data: session, isPending } = useSession();
-  const [name, setName] = useState('');
+  // Pre-fill from sign-up flow if marketing carried these through
+  const initialSchool = params.get('school')?.trim() ?? '';
+  const [name, setName] = useState(initialSchool);
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
