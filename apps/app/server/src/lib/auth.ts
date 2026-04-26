@@ -23,6 +23,16 @@ export const auth = betterAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
     },
   },
+  account: {
+    // Allow a Google sign-in to attach to an existing user with the same
+    // verified email — needed so that pre-seeded super-admin records (set
+    // up before first sign-in) are linked to instead of being shadowed by
+    // a fresh user record on first OAuth flow.
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ['google'],
+    },
+  },
   plugins: [
     magicLink({
       sendMagicLink: async ({ email, url }) => {

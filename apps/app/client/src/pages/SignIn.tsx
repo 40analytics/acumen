@@ -89,7 +89,7 @@ export default function SignIn() {
                     Sign in to Acumen
                   </h1>
                   <p className="text-[14.5px] text-ink-soft leading-relaxed">
-                    Welcome back. Use Google or your work email to continue.
+                    Welcome back. Use Google or your email to continue.
                   </p>
                 </div>
 
@@ -114,13 +114,13 @@ export default function SignIn() {
 
                 <form onSubmit={handleEmailSignIn} className="space-y-4">
                   <div>
-                    <Label htmlFor="email">Work email</Label>
+                    <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
                       type="email"
                       autoComplete="email"
                       autoFocus
-                      placeholder="you@school.edu"
+                      placeholder="you@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required

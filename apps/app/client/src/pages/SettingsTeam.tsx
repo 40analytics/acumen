@@ -252,12 +252,12 @@ function InviteDialog({ tenantSlug }: { tenantSlug: string }) {
       >
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
           <div>
-            <Label htmlFor="invite-email">Work email</Label>
+            <Label htmlFor="invite-email">Email</Label>
             <Input
               id="invite-email"
               type="email"
               autoFocus
-              placeholder="colleague@school.edu"
+              placeholder="colleague@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

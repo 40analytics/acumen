@@ -141,13 +141,13 @@ export default function SignUp() {
 
                 <form onSubmit={handleEmailSignUp} className="space-y-4">
                   <div>
-                    <Label htmlFor="email">Work email</Label>
+                    <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
                       type="email"
                       autoComplete="email"
                       autoFocus={!initialEmail}
-                      placeholder="you@school.edu"
+                      placeholder="you@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
