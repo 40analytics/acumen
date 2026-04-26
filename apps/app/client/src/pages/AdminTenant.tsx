@@ -10,12 +10,14 @@ import { signOut } from '@/lib/auth-client';
 import {
   ArrowLeft,
   Eye,
+  ExternalLink,
   Plus,
   Minus,
   Wallet,
   Users as UsersIcon,
   FileSpreadsheet,
   CreditCard,
+  TrendingUp,
   Crown,
   Shield,
   User as UserIcon,
@@ -28,7 +30,7 @@ interface TenantDetail {
     name: string;
     createdAt: string;
   };
-  balance: { balance: number; lifetimePurchased: number; lifetimeSpent: number } | null;
+  balance: { balance: number; lifetimePurchased: number; lifetimeSpent: number; revenueKobo?: number } | null;
   members: { userId: string; role: 'owner' | 'admin' | 'member'; joinedAt: string; email: string; name: string | null }[];
   recentUploads: { id: string; fileName: string; examType: string; month: string; year: number; recordCount: number; status: string; createdAt: string }[];
   recentTxns: { id: string; type: string; amount: number; balanceAfter: number; note: string | null; createdAt: string }[];
@@ -96,9 +98,19 @@ export default function AdminTenant() {
                 <h1 className="text-[32px] font-bold tracking-tightest leading-[1.1] mb-2">
                   {data.tenant.name}
                 </h1>
-                <div className="text-[14px] text-muted">
-                  <code>acumen.app/{data.tenant.slug}</code> · created{' '}
-                  {new Date(data.tenant.createdAt).toLocaleDateString()}
+                <div className="flex items-center gap-3 text-[14px] text-muted">
+                  <code>acumen.app/{data.tenant.slug}</code>
+                  <span>·</span>
+                  <span>created {new Date(data.tenant.createdAt).toLocaleDateString()}</span>
+                  <a
+                    href={`/${data.tenant.slug}/dashboard`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-accent hover:underline text-[13px] font-medium"
+                  >
+                    <ExternalLink size={12} />
+                    Open workspace
+                  </a>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -122,7 +134,7 @@ export default function AdminTenant() {
             </div>
 
             {/* Quick stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-10">
               <Stat
                 icon={<Wallet size={14} />}
                 label="Credit balance"
@@ -136,13 +148,24 @@ export default function AdminTenant() {
               />
               <Stat
                 icon={<FileSpreadsheet size={14} />}
-                label="Uploads (recent)"
+                label="Total uploads"
                 value={data.recentUploads.length}
               />
               <Stat
                 icon={<CreditCard size={14} />}
-                label="Lifetime purchased"
+                label="Credits purchased"
                 value={data.balance?.lifetimePurchased ?? 0}
+              />
+              <Stat
+                icon={<TrendingUp size={14} />}
+                label="Revenue"
+                value={
+                  data.recentPurchases
+                    .filter((p) => p.status === 'success')
+                    .reduce((s, p) => s + p.amountKobo, 0) / 100
+                }
+                prefix={data.recentPurchases[0]?.currency ?? 'GHS'}
+                isAmount
               />
             </div>
 
@@ -328,11 +351,15 @@ function Stat({
   label,
   value,
   accent,
+  prefix,
+  isAmount,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   accent?: boolean;
+  prefix?: string;
+  isAmount?: boolean;
 }) {
   return (
     <div className="card p-5">
@@ -341,10 +368,12 @@ function Stat({
         {label}
       </div>
       <div
-        className="text-[32px] font-bold tracking-tightest leading-none"
+        className="text-[28px] font-bold tracking-tightest leading-none"
         style={{ color: accent ? '#9A3412' : '#0A0A0B' }}
       >
-        {value.toLocaleString()}
+        {isAmount
+          ? `${prefix ?? ''} ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : value.toLocaleString()}
       </div>
     </div>
   );
