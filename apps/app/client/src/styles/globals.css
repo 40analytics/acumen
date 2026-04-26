@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+  }
+  body {
+    background: #EDF1E7;
+    color: #0A0A0B;
+    line-height: 1.6;
+    overflow-x: hidden;
+    width: 100%;
+  }
+  ::selection { background: #0A0A0B; color: #EDF1E7; }
+  ::placeholder { color: #A1A1AA; }
+}
+
+@layer components {
+  .container-page {
+    max-width: 1180px;
+    margin-inline: auto;
+    padding-inline: 24px;
+    width: 100%;
+  }
+
+  .input-base {
+    @apply w-full px-4 py-3 rounded text-[14.5px] bg-surface border border-border
+           text-ink transition-colors outline-none
+           focus:border-ink focus:shadow-focus
+           placeholder:text-faint;
+  }
+
+  .label-base {
+    @apply text-[12px] font-semibold text-ink tracking-tight;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3 rounded
+           bg-ink text-bg font-semibold text-[14.5px] tracking-tight
+           transition-all duration-150 hover:opacity-90 hover:-translate-y-px
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded
+           bg-surface text-ink font-semibold text-[14px] tracking-tight
+           border border-border transition-colors duration-150
+           hover:border-ink hover:bg-bg
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded
+           text-muted font-medium text-[13.5px]
+           transition-colors duration-150 hover:text-ink hover:bg-border-soft;
+  }
+
+  .card {
+    @apply bg-surface border border-border rounded-lg;
+  }
+
+  .eyebrow-pill {
+    @apply inline-flex items-center gap-2 text-[12px] font-semibold uppercase
+           tracking-[0.04em] text-accent bg-accent-soft px-3.5 py-1.5 rounded-full;
+  }
+
+  .eyebrow-pill::before {
+    content: '';
+    @apply w-1.5 h-1.5 bg-accent rounded-full animate-pulse;
+  }
+
+  .h-display {
+    @apply font-bold tracking-tightest leading-[1.05] text-ink;
+  }
+}

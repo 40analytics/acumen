@@ -1,0 +1,9 @@
+<svg width="170" height="36" viewBox="0 0 170 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="36" height="36" rx="8" fill="#0A0A0B"/>
+  <g stroke="#FAFAF7" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 18 9 L 9 27"/>
+    <path d="M 18 9 L 27 27"/>
+    <path d="M 13 20 L 23 20"/>
+  </g>
+  <text x="46" y="25" font-family="Inter, -apple-system, sans-serif" font-size="20" font-weight="700" letter-spacing="-0.6" fill="#0A0A0B">Acumen</text>
+</svg>

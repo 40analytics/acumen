@@ -1,0 +1,28 @@
+{
+  "name": "acumen-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/marketing",
+    "apps/app/client",
+    "apps/app/server",
+    "apps/app/shared"
+  ],
+  "scripts": {
+    "dev": "concurrently -n marketing,app-client,app-server -c yellow,cyan,magenta \"npm:dev:marketing\" \"npm:dev:app-client\" \"npm:dev:app-server\"",
+    "dev:marketing": "npm --workspace @acumen/marketing run dev",
+    "dev:app-client": "npm --workspace @acumen/client run dev",
+    "dev:app-server": "npm --workspace @acumen/server run dev",
+    "build:marketing": "npm --workspace @acumen/marketing run build",
+    "build:app-client": "npm --workspace @acumen/client run build",
+    "build:app-server": "npm --workspace @acumen/server run build",
+    "db:push": "npm --workspace @acumen/server run db:push",
+    "db:generate": "npm --workspace @acumen/server run db:generate",
+    "db:studio": "npm --workspace @acumen/server run db:studio"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}

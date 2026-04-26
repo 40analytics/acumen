@@ -1,0 +1,138 @@
+# Acumen — Cloud Build for PRODUCTION (push to `main` branch)
+# Builds + deploys: marketing, app-client, app-server to Cloud Run.
+
+substitutions:
+  _ENV: prod
+  _REGION: us-central1
+  _AR_REPO: acumen
+  _MARKETING_URL: https://acumen.app
+  _APP_URL: https://app.acumen.app
+  _API_URL: https://api.acumen.app
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/marketing:${_ENV}-${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-client:${_ENV}-${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server:${_ENV}-${SHORT_SHA}
+
+steps:
+  - id: build-marketing
+    name: gcr.io/cloud-builders/docker
+    dir: apps/marketing
+    args:
+      - build
+      - --build-arg
+      - PUBLIC_APP_URL=${_APP_URL}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/marketing:${_ENV}-${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/marketing:${_ENV}-latest
+      - .
+
+  - id: build-app-server
+    name: gcr.io/cloud-builders/docker
+    dir: apps/app
+    args:
+      - build
+      - -f
+      - server/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server:${_ENV}-${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server:${_ENV}-latest
+      - .
+
+  - id: build-app-client
+    name: gcr.io/cloud-builders/docker
+    dir: apps/app
+    args:
+      - build
+      - -f
+      - client/Dockerfile
+      - --build-arg
+      - VITE_API_URL=${_API_URL}
+      - --build-arg
+      - VITE_MARKETING_URL=${_MARKETING_URL}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-client:${_ENV}-${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-client:${_ENV}-latest
+      - .
+
+  - id: push-marketing
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/marketing']
+    waitFor: [build-marketing]
+
+  - id: push-app-server
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server']
+    waitFor: [build-app-server]
+
+  - id: push-app-client
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-client']
+    waitFor: [build-app-client]
+
+  - id: deploy-marketing
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - acumen-marketing-${_ENV}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/marketing:${_ENV}-${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=512Mi
+      - --cpu=1
+      - --min-instances=1
+      - --max-instances=10
+      - --concurrency=200
+    waitFor: [push-marketing]
+
+  - id: deploy-app-server
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - acumen-app-server-${_ENV}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server:${_ENV}-${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=1Gi
+      - --cpu=1
+      - --min-instances=1
+      - --max-instances=20
+      - --concurrency=80
+      - --timeout=120s
+      - --set-env-vars=NODE_ENV=production,APP_URL=${_APP_URL},API_URL=${_API_URL},EMAIL_FROM=Acumen <hello@acumen.app>,PAYSTACK_CURRENCY=GHS,PAYSTACK_USD_RATE=12
+      - --set-secrets=DATABASE_URL=ACUMEN_DATABASE_URL_PROD:latest,BETTER_AUTH_SECRET=ACUMEN_BETTER_AUTH_SECRET_PROD:latest,GOOGLE_CLIENT_ID=ACUMEN_GOOGLE_CLIENT_ID_PROD:latest,GOOGLE_CLIENT_SECRET=ACUMEN_GOOGLE_CLIENT_SECRET_PROD:latest,RESEND_API_KEY=ACUMEN_RESEND_API_KEY_PROD:latest,PAYSTACK_SECRET_KEY=ACUMEN_PAYSTACK_SECRET_KEY_PROD:latest,PAYSTACK_PUBLIC_KEY=ACUMEN_PAYSTACK_PUBLIC_KEY_PROD:latest
+    waitFor: [push-app-server]
+
+  - id: deploy-app-client
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - acumen-app-client-${_ENV}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-client:${_ENV}-${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --memory=512Mi
+      - --cpu=1
+      - --min-instances=1
+      - --max-instances=10
+      - --concurrency=200
+    waitFor: [push-app-client]
