@@ -1,20 +1,23 @@
+# Build context: monorepo root
+# Dockerfile path: apps/app/server/Dockerfile
+
 # ─── Builder ───────────────────────────────────────────────
 FROM node:20-slim AS builder
-WORKDIR /app
+WORKDIR /repo
 
-# Workspace manifests (better caching)
+# Workspace manifests (cache layer)
 COPY package*.json ./
-COPY shared/package*.json ./shared/
-COPY server/package*.json ./server/
-COPY client/package*.json ./client/
+COPY apps/app/shared/package*.json ./apps/app/shared/
+COPY apps/app/server/package*.json ./apps/app/server/
+COPY apps/app/client/package*.json ./apps/app/client/
+COPY apps/marketing/package*.json ./apps/marketing/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
-# Source for shared + server (skip client — not needed in API container)
-COPY shared ./shared
-COPY server ./server
+# Source for shared + server only (client + marketing not needed)
+COPY apps/app/shared ./apps/app/shared
+COPY apps/app/server ./apps/app/server
 
-# Build
 RUN npm --workspace @acumen/shared run build || true
 RUN npm --workspace @acumen/server run build
 
@@ -23,20 +26,13 @@ FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Production deps only
-COPY package*.json ./
-COPY shared/package*.json ./shared/
-COPY server/package*.json ./server/
-RUN npm install --omit=dev --workspaces --include-workspace-root --no-audit --no-fund \
-  --workspace @acumen/server --workspace @acumen/shared
+# Hoisted node_modules + built dist + the shared package source
+COPY --from=builder /repo/node_modules ./node_modules
+COPY --from=builder /repo/apps/app/shared ./shared
+COPY --from=builder /repo/apps/app/server/dist ./dist
+COPY --from=builder /repo/apps/app/server/package.json ./
 
-# Built artifacts
-COPY --from=builder /app/shared ./shared
-COPY --from=builder /app/server/dist ./server/dist
-COPY --from=builder /app/server/package.json ./server/
-
-# Cloud Run injects PORT — default to 8080 locally
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["node", "server/dist/index.js"]
+CMD ["node", "dist/index.js"]

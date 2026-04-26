@@ -34,11 +34,10 @@ steps:
 
   - id: build-app-server
     name: gcr.io/cloud-builders/docker
-    dir: apps/app
     args:
       - build
       - -f
-      - server/Dockerfile
+      - apps/app/server/Dockerfile
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/app-server:${_ENV}-${SHORT_SHA}
       - -t
@@ -47,11 +46,10 @@ steps:
 
   - id: build-app-client
     name: gcr.io/cloud-builders/docker
-    dir: apps/app
     args:
       - build
       - -f
-      - client/Dockerfile
+      - apps/app/client/Dockerfile
       - --build-arg
       - VITE_API_URL=${_API_URL}
       - --build-arg
