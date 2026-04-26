@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { creditBalances, tenantMembers, users } from '../db/schema.js';
+import { creditBalances, tenantMembers, users, organisations } from '../db/schema.js';
 import { requireUser, requireTenant, type AppEnv } from '../middleware/auth.js';
 import { billingRouter } from './billing.js';
 import { uploadsRouter } from './uploads.js';
@@ -30,19 +30,34 @@ tenantRouter.route('/export', exportRouter);
 
 /**
  * GET /api/t/:tenantSlug — tenant overview (current user's view)
+ * Credits are fetched from the org-level balance.
  */
 tenantRouter.get('/', async (c) => {
   const tenant = c.get('tenant')!;
-  const balance = await db.query.creditBalances.findFirst({
-    where: eq(creditBalances.tenantId, tenant.tenantId),
-  });
+
+  // Fetch org-level credits
+  const balance = tenant.orgId
+    ? await db.query.creditBalances.findFirst({
+        where: eq(creditBalances.orgId, tenant.orgId),
+      })
+    : null;
+
+  // Fetch org metadata (workspace limit info)
+  const org = tenant.orgId
+    ? await db.query.organisations.findFirst({
+        where: eq(organisations.id, tenant.orgId),
+        columns: { id: true, name: true, slug: true, maxWorkspaces: true },
+      })
+    : null;
 
   return c.json({
     tenant: {
       id: tenant.tenantId,
       slug: tenant.tenantSlug,
       name: tenant.tenantName,
+      orgId: tenant.orgId,
     },
+    org,
     membership: {
       role: tenant.role,
     },

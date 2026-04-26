@@ -1,5 +1,7 @@
 export type TenantRole = 'owner' | 'admin' | 'member';
 
+export type OrgRole = 'owner' | 'admin' | 'member';
+
 export type ExamType = 'IGCSE' | 'A Level';
 
 export type UploadStatus = 'processing' | 'processed' | 'failed';
@@ -19,6 +21,8 @@ export interface CreditPack {
   uploads: number;
   priceUsd: number;
   perUploadUsd: number;
+  /** Maximum number of workspaces the org can have after buying this pack */
+  workspaceLimit: number;
   popular?: boolean;
 }
 
@@ -32,10 +36,27 @@ export interface User {
   createdAt: Date;
 }
 
+export interface Organisation {
+  id: string;
+  slug: string;
+  name: string;
+  emailDomain: string | null;
+  maxWorkspaces: number;
+  createdAt: Date;
+}
+
+export interface OrgMember {
+  orgId: string;
+  userId: string;
+  role: OrgRole;
+  createdAt: Date;
+}
+
 export interface Tenant {
   id: string;
   slug: string;
   name: string;
+  orgId: string | null;
   createdAt: Date;
 }
 
@@ -47,7 +68,7 @@ export interface TenantMember {
 }
 
 export interface CreditBalance {
-  tenantId: string;
+  orgId: string;
   balance: number;
   updatedAt: Date;
 }

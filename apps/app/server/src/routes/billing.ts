@@ -43,7 +43,7 @@ billingRouter.get('/packs', (c) => {
 });
 
 /**
- * Sweep all `pending` purchases for a tenant — re-verify each one with
+ * Sweep all `pending` purchases for an org — re-verify each one with
  * Paystack. Catches the case where the user paid but never landed on the
  * callback page (closed browser, network drop, etc.).
  *
@@ -51,6 +51,7 @@ billingRouter.get('/packs', (c) => {
  * across multiple apps, so this active poll is our reliable path to credit.
  */
 async function sweepPendingPurchases(args: {
+  orgId: string;
   tenantId: string;
   tenantName: string;
   userEmail: string;
@@ -65,7 +66,7 @@ async function sweepPendingPurchases(args: {
     .from(creditPurchases)
     .where(
       and(
-        eq(creditPurchases.tenantId, args.tenantId),
+        eq(creditPurchases.orgId, args.orgId),
         or(
           eq(creditPurchases.status, 'pending'),
           eq(creditPurchases.status, 'initialized')
@@ -95,10 +96,19 @@ async function sweepPendingPurchases(args: {
               lifetimePurchased: sql`${creditBalances.lifetimePurchased} + ${purchase.creditsToCredit}`,
               updatedAt: new Date(),
             })
-            .where(eq(creditBalances.tenantId, purchase.tenantId))
+            .where(eq(creditBalances.orgId, purchase.orgId!))
             .returning({ balance: creditBalances.balance });
 
+          // Bump maxWorkspaces if this pack allows more
+          const pack = CREDIT_PACKS.find((p) => p.id === purchase.packId);
+          if (pack?.workspaceLimit) {
+            await tx.execute(
+              sql`UPDATE organisations SET max_workspaces = GREATEST(max_workspaces, ${pack.workspaceLimit}), updated_at = NOW() WHERE id = ${purchase.orgId}`
+            );
+          }
+
           await tx.insert(creditTransactions).values({
+            orgId: purchase.orgId,
             tenantId: purchase.tenantId,
             type: 'purchase',
             amount: purchase.creditsToCredit,
@@ -154,7 +164,7 @@ async function sweepPendingPurchases(args: {
 }
 
 /**
- * GET /api/t/:tenantSlug/billing/balance — current balance + recent transactions
+ * GET /api/t/:tenantSlug/billing/balance — current org balance + recent transactions
  * Sweeps any pending Paystack purchases on the way in — this is our
  * webhook substitute, since the Paystack account is shared.
  */
@@ -162,21 +172,26 @@ billingRouter.get('/balance', async (c) => {
   const tenant = c.get('tenant')!;
   const user = c.get('user');
 
+  if (!tenant.orgId) {
+    return c.json({ balance: 0, lifetimePurchased: 0, lifetimeSpent: 0, transactions: [] });
+  }
+
   // Best-effort sweep — never blocks the response if Paystack is slow
   await sweepPendingPurchases({
+    orgId: tenant.orgId,
     tenantId: tenant.tenantId,
     tenantName: tenant.tenantName,
     userEmail: user.email,
   });
 
   const balance = await db.query.creditBalances.findFirst({
-    where: eq(creditBalances.tenantId, tenant.tenantId),
+    where: eq(creditBalances.orgId, tenant.orgId),
   });
 
   const recentTxns = await db
     .select()
     .from(creditTransactions)
-    .where(eq(creditTransactions.tenantId, tenant.tenantId))
+    .where(eq(creditTransactions.orgId, tenant.orgId))
     .orderBy(desc(creditTransactions.createdAt))
     .limit(20);
 
@@ -195,7 +210,9 @@ billingRouter.get('/balance', async (c) => {
 billingRouter.post('/sweep', async (c) => {
   const tenant = c.get('tenant')!;
   const user = c.get('user');
+  if (!tenant.orgId) return c.json({ ok: true });
   await sweepPendingPurchases({
+    orgId: tenant.orgId,
     tenantId: tenant.tenantId,
     tenantName: tenant.tenantName,
     userEmail: user.email,
@@ -204,14 +221,15 @@ billingRouter.post('/sweep', async (c) => {
 });
 
 /**
- * GET /api/t/:tenantSlug/billing/purchases — list purchase history
+ * GET /api/t/:tenantSlug/billing/purchases — list org purchase history
  */
 billingRouter.get('/purchases', async (c) => {
   const tenant = c.get('tenant')!;
+  if (!tenant.orgId) return c.json({ purchases: [] });
   const purchases = await db
     .select()
     .from(creditPurchases)
-    .where(eq(creditPurchases.tenantId, tenant.tenantId))
+    .where(eq(creditPurchases.orgId, tenant.orgId))
     .orderBy(desc(creditPurchases.createdAt))
     .limit(50);
   return c.json({ purchases });
@@ -225,6 +243,8 @@ billingRouter.post('/checkout', zValidator('json', purchaseCreditsSchema), async
   const user = c.get('user');
   const { packId } = c.req.valid('json');
 
+  if (!tenant.orgId) return c.json({ error: 'Workspace has no organisation — contact support.' }, 400);
+
   const pack = CREDIT_PACKS.find((p) => p.id === packId);
   if (!pack) return c.json({ error: 'Unknown pack' }, 400);
 
@@ -236,6 +256,7 @@ billingRouter.post('/checkout', zValidator('json', purchaseCreditsSchema), async
   const [purchase] = await db
     .insert(creditPurchases)
     .values({
+      orgId: tenant.orgId,
       tenantId: tenant.tenantId,
       initiatedByUserId: user.id,
       packId: pack.id,
@@ -304,8 +325,8 @@ billingRouter.get('/verify', async (c) => {
     where: eq(creditPurchases.paystackReference, reference),
   });
   if (!purchase) return c.json({ error: 'Unknown reference' }, 404);
-  if (purchase.tenantId !== tenant.tenantId) {
-    return c.json({ error: 'Reference belongs to another workspace' }, 403);
+  if (purchase.orgId !== tenant.orgId) {
+    return c.json({ error: 'Reference belongs to another organisation' }, 403);
   }
 
   if (purchase.status === 'success') {
@@ -350,10 +371,19 @@ billingRouter.get('/verify', async (c) => {
         lifetimePurchased: sql`${creditBalances.lifetimePurchased} + ${purchase.creditsToCredit}`,
         updatedAt: new Date(),
       })
-      .where(eq(creditBalances.tenantId, purchase.tenantId))
+      .where(eq(creditBalances.orgId, purchase.orgId!))
       .returning({ balance: creditBalances.balance });
 
+    // Bump org workspace limit if this pack unlocks more
+    const packMeta = CREDIT_PACKS.find((p) => p.id === purchase.packId);
+    if (packMeta?.workspaceLimit) {
+      await tx.execute(
+        sql`UPDATE organisations SET max_workspaces = GREATEST(max_workspaces, ${packMeta.workspaceLimit}), updated_at = NOW() WHERE id = ${purchase.orgId}`
+      );
+    }
+
     await tx.insert(creditTransactions).values({
+      orgId: purchase.orgId,
       tenantId: purchase.tenantId,
       type: 'purchase',
       amount: purchase.creditsToCredit,

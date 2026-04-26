@@ -6,6 +6,7 @@ import { auth } from './lib/auth.js';
 import { meRouter } from './routes/me.js';
 import { tenantsRouter } from './routes/tenants.js';
 import { tenantRouter } from './routes/tenant.js';
+import { orgsRouter } from './routes/orgs.js';
 import { adminRouter } from './routes/admin.js';
 import { adminAuthRouter } from './routes/adminAuth.js';
 import { invitesRouter } from './routes/invites.js';
@@ -39,6 +40,7 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 app.route('/api/me', meRouter);
 app.route('/api/tenants', tenantsRouter);
 app.route('/api/t/:tenantSlug', tenantRouter);
+app.route('/api/orgs', orgsRouter);
 app.route('/api/admin/auth', adminAuthRouter);   // public — login/logout/me
 app.route('/api/admin', adminRouter);             // protected — requireAdminToken
 app.route('/api/invites', invitesRouter);

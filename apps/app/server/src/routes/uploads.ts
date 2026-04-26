@@ -49,9 +49,14 @@ uploadsRouter.post('/', async (c) => {
     return c.json({ error: 'Only .xlsx and .xls files are supported' }, 400);
   }
 
-  // Check balance up-front
+  // Credits are held at org level
+  if (!tenant.orgId) {
+    return c.json({ error: 'Workspace has no organisation — contact support.' }, 400);
+  }
+
+  // Check org balance up-front
   const balance = await db.query.creditBalances.findFirst({
-    where: eq(creditBalances.tenantId, tenant.tenantId),
+    where: eq(creditBalances.orgId, tenant.orgId),
   });
   if (!balance || balance.balance < 1) {
     return c.json(
@@ -83,7 +88,7 @@ uploadsRouter.post('/', async (c) => {
 
   // Atomic: deduct credit, insert upload, insert all rows
   const result = await db.transaction(async (tx) => {
-    // Lock & deduct
+    // Lock & deduct from org balance
     const [updated] = await tx
       .update(creditBalances)
       .set({
@@ -92,7 +97,7 @@ uploadsRouter.post('/', async (c) => {
         updatedAt: new Date(),
       })
       .where(
-        and(eq(creditBalances.tenantId, tenant.tenantId), sql`${creditBalances.balance} >= 1`)
+        and(eq(creditBalances.orgId, tenant.orgId!), sql`${creditBalances.balance} >= 1`)
       )
       .returning({ balance: creditBalances.balance });
     if (!updated) {
@@ -119,10 +124,11 @@ uploadsRouter.post('/', async (c) => {
       })
       .returning();
 
-    // Log the credit transaction
+    // Log the credit transaction against the org (with workspace context)
     const [txn] = await tx
       .insert(creditTransactions)
       .values({
+        orgId: tenant.orgId,
         tenantId: tenant.tenantId,
         type: 'upload',
         amount: -1,
@@ -224,8 +230,10 @@ uploadsRouter.delete('/:uploadId', async (c) => {
   });
   if (!upload) return c.json({ error: 'Upload not found' }, 404);
 
+  if (!tenant.orgId) return c.json({ error: 'Workspace has no organisation' }, 400);
+
   await db.transaction(async (tx) => {
-    // Refund credit
+    // Refund credit to org balance
     const [updated] = await tx
       .update(creditBalances)
       .set({
@@ -233,10 +241,11 @@ uploadsRouter.delete('/:uploadId', async (c) => {
         lifetimeSpent: sql`${creditBalances.lifetimeSpent} - ${upload.creditsCharged}`,
         updatedAt: new Date(),
       })
-      .where(eq(creditBalances.tenantId, tenant.tenantId))
+      .where(eq(creditBalances.orgId, tenant.orgId!))
       .returning({ balance: creditBalances.balance });
 
     await tx.insert(creditTransactions).values({
+      orgId: tenant.orgId,
       tenantId: tenant.tenantId,
       type: 'refund',
       amount: upload.creditsCharged,

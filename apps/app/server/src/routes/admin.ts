@@ -7,6 +7,7 @@ import { db } from '../db/index.js';
 import {
   tenants,
   tenantMembers,
+  organisations,
   creditBalances,
   creditTransactions,
   creditPurchases,
@@ -69,10 +70,11 @@ adminRouter.get('/tenants', async (c) => {
       id: tenants.id,
       slug: tenants.slug,
       name: tenants.name,
+      orgId: tenants.orgId,
       createdAt: tenants.createdAt,
       memberCount: sql<number>`(SELECT count(*)::int FROM ${tenantMembers} WHERE tenant_id = ${tenants.id})`,
       uploadCount: sql<number>`(SELECT count(*)::int FROM ${uploads} WHERE tenant_id = ${tenants.id})`,
-      creditBalance: sql<number>`COALESCE((SELECT balance FROM ${creditBalances} WHERE tenant_id = ${tenants.id}), 0)`,
+      creditBalance: sql<number>`COALESCE((SELECT cb.balance FROM ${creditBalances} cb WHERE cb.org_id = ${tenants.orgId}), 0)`,
     })
     .from(tenants)
     .orderBy(desc(tenants.createdAt));
@@ -86,7 +88,9 @@ adminRouter.get('/tenants/:tenantId', async (c) => {
   if (!tenant) return c.json({ error: 'Tenant not found' }, 404);
 
   const [balance, members, recentUploads, recentTxns, recentPurchases] = await Promise.all([
-    db.query.creditBalances.findFirst({ where: eq(creditBalances.tenantId, tenantId) }),
+    tenant.orgId
+      ? db.query.creditBalances.findFirst({ where: eq(creditBalances.orgId, tenant.orgId) })
+      : Promise.resolve(null),
     db
       .select({
         userId: tenantMembers.userId,
@@ -111,12 +115,14 @@ adminRouter.get('/tenants/:tenantId', async (c) => {
       .where(eq(creditTransactions.tenantId, tenantId))
       .orderBy(desc(creditTransactions.createdAt))
       .limit(20),
-    db
-      .select()
-      .from(creditPurchases)
-      .where(eq(creditPurchases.tenantId, tenantId))
-      .orderBy(desc(creditPurchases.createdAt))
-      .limit(20),
+    tenant.orgId
+      ? db
+          .select()
+          .from(creditPurchases)
+          .where(eq(creditPurchases.orgId, tenant.orgId))
+          .orderBy(desc(creditPurchases.createdAt))
+          .limit(20)
+      : Promise.resolve([]),
   ]);
 
   return c.json({ tenant, balance, members, recentUploads, recentTxns, recentPurchases });
@@ -141,6 +147,11 @@ adminRouter.post('/tenants/:tenantId/credits/grant', zValidator('json', grantSch
   const { amount, note } = c.req.valid('json');
   const actor = await getAdminActor();
 
+  // Credits are at org level — look up the tenant's org
+  const tenant = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
+  if (!tenant?.orgId) return c.json({ error: 'Tenant has no organisation' }, 400);
+  const orgId = tenant.orgId;
+
   const result = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(creditBalances)
@@ -149,13 +160,14 @@ adminRouter.post('/tenants/:tenantId/credits/grant', zValidator('json', grantSch
         lifetimePurchased: sql`${creditBalances.lifetimePurchased} + ${amount}`,
         updatedAt: new Date(),
       })
-      .where(eq(creditBalances.tenantId, tenantId))
+      .where(eq(creditBalances.orgId, orgId))
       .returning({ balance: creditBalances.balance });
-    if (!updated) throw new Error('Tenant has no credit balance row');
+    if (!updated) throw new Error('Organisation has no credit balance row');
 
     const [txn] = await tx
       .insert(creditTransactions)
       .values({
+        orgId,
         tenantId,
         type: 'admin_grant',
         amount,
@@ -169,7 +181,7 @@ adminRouter.post('/tenants/:tenantId/credits/grant', zValidator('json', grantSch
       actorUserId: actor.id,
       action: 'credits.grant',
       targetTenantId: tenantId,
-      metadata: { amount, note, transactionId: txn.id, balanceAfter: updated.balance },
+      metadata: { amount, note, orgId, transactionId: txn.id, balanceAfter: updated.balance },
       ipAddress: c.req.header('x-forwarded-for') ?? null,
     });
 
@@ -184,6 +196,11 @@ adminRouter.post('/tenants/:tenantId/credits/revoke', zValidator('json', grantSc
   const { amount, note } = c.req.valid('json');
   const actor = await getAdminActor();
 
+  // Credits are at org level — look up the tenant's org
+  const tenant = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
+  if (!tenant?.orgId) return c.json({ error: 'Tenant has no organisation' }, 400);
+  const orgId = tenant.orgId;
+
   const result = await db.transaction(async (tx) => {
     const [updated] = await tx
       .update(creditBalances)
@@ -191,13 +208,14 @@ adminRouter.post('/tenants/:tenantId/credits/revoke', zValidator('json', grantSc
         balance: sql`GREATEST(${creditBalances.balance} - ${amount}, 0)`,
         updatedAt: new Date(),
       })
-      .where(eq(creditBalances.tenantId, tenantId))
+      .where(eq(creditBalances.orgId, orgId))
       .returning({ balance: creditBalances.balance });
-    if (!updated) throw new Error('Tenant has no credit balance row');
+    if (!updated) throw new Error('Organisation has no credit balance row');
 
     const [txn] = await tx
       .insert(creditTransactions)
       .values({
+        orgId,
         tenantId,
         type: 'admin_revoke',
         amount: -amount,
@@ -211,7 +229,7 @@ adminRouter.post('/tenants/:tenantId/credits/revoke', zValidator('json', grantSc
       actorUserId: actor.id,
       action: 'credits.revoke',
       targetTenantId: tenantId,
-      metadata: { amount, note, transactionId: txn.id, balanceAfter: updated.balance },
+      metadata: { amount, note, orgId, transactionId: txn.id, balanceAfter: updated.balance },
       ipAddress: c.req.header('x-forwarded-for') ?? null,
     });
 

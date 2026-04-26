@@ -18,6 +18,21 @@ export const createTenantSchema = z.object({
   slug: slugSchema,
 });
 
+/** Schema for creating an org + first workspace together during onboarding */
+export const createOrgWithWorkspaceSchema = z.object({
+  orgName: z.string().min(2).max(80).trim(),
+  workspaceName: z.string().min(2).max(80).trim(),
+  workspaceSlug: slugSchema,
+  /** Optional email domain to claim for this org (e.g. "school.edu") */
+  emailDomain: z
+    .string()
+    .toLowerCase()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/, 'Enter a valid domain')
+    .optional()
+    .or(z.literal('')),
+});
+
 export const inviteMemberSchema = z.object({
   email: emailSchema,
   role: z.enum(['admin', 'member']),

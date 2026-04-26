@@ -105,6 +105,63 @@ export const verifications = pgTable('verifications', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ─── ORGANISATIONS ──────────────────────────────────────
+/**
+ * An organisation is the billing entity that sits above one or more workspaces.
+ * Credits are held at org level and shared across all workspaces in the org.
+ * The maxWorkspaces field is bumped whenever the org buys a higher-tier pack.
+ */
+export const organisations = pgTable(
+  'organisations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull().unique(),
+    name: text('name').notNull(),
+    /** If set, users signing up with this email domain are suggested to join */
+    emailDomain: text('email_domain'),
+    /** Maximum workspaces this org can create; increased when buying bigger packs */
+    maxWorkspaces: integer('max_workspaces').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    slugIdx: uniqueIndex('organisations_slug_idx').on(t.slug),
+    domainIdx: index('organisations_domain_idx').on(t.emailDomain),
+  })
+);
+
+export const orgMembers = pgTable(
+  'org_members',
+  {
+    orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    role: tenantRoleEnum('role').notNull().default('member'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.orgId, t.userId] }),
+    userIdx: index('org_members_user_idx').on(t.userId),
+  })
+);
+
+export const orgJoinRequests = pgTable(
+  'org_join_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    /** pending | approved | rejected */
+    status: text('status').notNull().default('pending'),
+    message: text('message'),
+    reviewedById: text('reviewed_by_id').references(() => users.id, { onDelete: 'set null' }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    orgUserIdx: index('org_join_requests_org_user_idx').on(t.orgId, t.userId),
+  })
+);
+
 // ─── TENANCY ────────────────────────────────────────────
 export const tenants = pgTable(
   'tenants',
@@ -114,12 +171,15 @@ export const tenants = pgTable(
     name: text('name').notNull(),
     logoUrl: text('logo_url'),
     countryCode: text('country_code'),
+    /** The organisation this workspace belongs to */
+    orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => ({
     slugIdx: uniqueIndex('tenants_slug_idx').on(t.slug),
+    orgIdx: index('tenants_org_idx').on(t.orgId),
   })
 );
 
@@ -157,9 +217,13 @@ export const tenantInvites = pgTable(
   })
 );
 
-// ─── CREDITS ────────────────────────────────────────────
+// ─── CREDITS (org-level) ────────────────────────────────
+/**
+ * Credits are now owned by the organisation, not individual workspaces.
+ * All workspaces in an org share the same credit pool.
+ */
 export const creditBalances = pgTable('credit_balances', {
-  tenantId: uuid('tenant_id').primaryKey().references(() => tenants.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id').primaryKey().references(() => organisations.id, { onDelete: 'cascade' }),
   balance: integer('balance').notNull().default(0),
   lifetimePurchased: integer('lifetime_purchased').notNull().default(0),
   lifetimeSpent: integer('lifetime_spent').notNull().default(0),
@@ -170,7 +234,10 @@ export const creditTransactions = pgTable(
   'credit_transactions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    /** The org whose balance changed (main billing scope) */
+    orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'cascade' }),
+    /** Which workspace triggered this transaction (context only — nullable for legacy rows) */
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'set null' }),
     type: creditTxnTypeEnum('type').notNull(),
     amount: integer('amount').notNull(), // positive = credit added; negative = credit spent
     balanceAfter: integer('balance_after').notNull(),
@@ -181,6 +248,7 @@ export const creditTransactions = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
+    orgIdx: index('credit_txn_org_idx').on(t.orgId, t.createdAt),
     tenantIdx: index('credit_txn_tenant_idx').on(t.tenantId, t.createdAt),
   })
 );
@@ -189,7 +257,10 @@ export const creditPurchases = pgTable(
   'credit_purchases',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    /** The org being billed */
+    orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'cascade' }),
+    /** Which workspace the purchase was initiated from (context) */
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'set null' }),
     initiatedByUserId: text('initiated_by_user_id').notNull().references(() => users.id, { onDelete: 'set null' }),
     packId: text('pack_id').notNull(),
     creditsToCredit: integer('credits_to_credit').notNull(),
@@ -205,6 +276,7 @@ export const creditPurchases = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
+    orgIdx: index('credit_purchases_org_idx').on(t.orgId, t.createdAt),
     tenantIdx: index('credit_purchases_tenant_idx').on(t.tenantId, t.createdAt),
     refIdx: uniqueIndex('credit_purchases_ref_idx').on(t.paystackReference),
   })
@@ -398,17 +470,39 @@ export const adminAuditLog = pgTable('admin_audit_log', {
 // ─── RELATIONS ──────────────────────────────────────────
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(tenantMembers),
+  orgMemberships: many(orgMembers),
   sessions: many(sessions),
   accounts: many(accounts),
+}));
+
+export const organisationsRelations = relations(organisations, ({ many, one }) => ({
+  members: many(orgMembers),
+  workspaces: many(tenants),
+  joinRequests: many(orgJoinRequests),
+  creditBalance: one(creditBalances, {
+    fields: [organisations.id],
+    references: [creditBalances.orgId],
+  }),
+}));
+
+export const orgMembersRelations = relations(orgMembers, ({ one }) => ({
+  org: one(organisations, {
+    fields: [orgMembers.orgId],
+    references: [organisations.id],
+  }),
+  user: one(users, {
+    fields: [orgMembers.userId],
+    references: [users.id],
+  }),
 }));
 
 export const tenantsRelations = relations(tenants, ({ many, one }) => ({
   members: many(tenantMembers),
   invites: many(tenantInvites),
   uploads: many(uploads),
-  creditBalance: one(creditBalances, {
-    fields: [tenants.id],
-    references: [creditBalances.tenantId],
+  org: one(organisations, {
+    fields: [tenants.orgId],
+    references: [organisations.id],
   }),
 }));
 

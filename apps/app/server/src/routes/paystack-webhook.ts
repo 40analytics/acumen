@@ -53,7 +53,7 @@ paystackWebhookRouter.post('/webhook', async (c) => {
     return c.json({ ok: true, failed: true });
   }
 
-  // Credit the tenant atomically
+  // Credit the org atomically
   await db.transaction(async (tx) => {
     const [updatedBalance] = await tx
       .update(creditBalances)
@@ -62,10 +62,11 @@ paystackWebhookRouter.post('/webhook', async (c) => {
         lifetimePurchased: sql`${creditBalances.lifetimePurchased} + ${purchase.creditsToCredit}`,
         updatedAt: new Date(),
       })
-      .where(eq(creditBalances.tenantId, purchase.tenantId))
+      .where(eq(creditBalances.orgId, purchase.orgId!))
       .returning({ balance: creditBalances.balance });
 
     await tx.insert(creditTransactions).values({
+      orgId: purchase.orgId,
       tenantId: purchase.tenantId,
       type: 'purchase',
       amount: purchase.creditsToCredit,
