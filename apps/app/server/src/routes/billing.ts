@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   creditBalances,
@@ -43,10 +43,131 @@ billingRouter.get('/packs', (c) => {
 });
 
 /**
+ * Sweep all `pending` purchases for a tenant — re-verify each one with
+ * Paystack. Catches the case where the user paid but never landed on the
+ * callback page (closed browser, network drop, etc.).
+ *
+ * We can't use Paystack webhooks because the Paystack account is shared
+ * across multiple apps, so this active poll is our reliable path to credit.
+ */
+async function sweepPendingPurchases(args: {
+  tenantId: string;
+  tenantName: string;
+  userEmail: string;
+}): Promise<void> {
+  // Only consider purchases older than 30s (avoid racing with checkout flow)
+  // and younger than 24h (anything older is almost certainly abandoned)
+  const cutoffNew = new Date(Date.now() - 30 * 1000);
+  const cutoffOld = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const pending = await db
+    .select()
+    .from(creditPurchases)
+    .where(
+      and(
+        eq(creditPurchases.tenantId, args.tenantId),
+        or(
+          eq(creditPurchases.status, 'pending'),
+          eq(creditPurchases.status, 'initialized')
+        )!,
+        lt(creditPurchases.createdAt, cutoffNew)
+      )
+    )
+    .limit(20);
+
+  for (const purchase of pending) {
+    try {
+      const verification = await verifyTransaction(purchase.paystackReference);
+      const remoteStatus = verification.data?.status;
+
+      if (verification.status && remoteStatus === 'success') {
+        // Atomically credit (re-checks status inside the txn for idempotency)
+        await db.transaction(async (tx) => {
+          const fresh = await tx.query.creditPurchases.findFirst({
+            where: eq(creditPurchases.id, purchase.id),
+          });
+          if (!fresh || fresh.status === 'success') return;
+
+          const [updated] = await tx
+            .update(creditBalances)
+            .set({
+              balance: sql`${creditBalances.balance} + ${purchase.creditsToCredit}`,
+              lifetimePurchased: sql`${creditBalances.lifetimePurchased} + ${purchase.creditsToCredit}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(creditBalances.tenantId, purchase.tenantId))
+            .returning({ balance: creditBalances.balance });
+
+          await tx.insert(creditTransactions).values({
+            tenantId: purchase.tenantId,
+            type: 'purchase',
+            amount: purchase.creditsToCredit,
+            balanceAfter: updated.balance,
+            purchaseId: purchase.id,
+            actorUserId: purchase.initiatedByUserId,
+            note: `Credit purchase: ${purchase.packId} (recovered)`,
+          });
+
+          await tx
+            .update(creditPurchases)
+            .set({
+              status: 'success',
+              paidAt: verification.data.paid_at
+                ? new Date(verification.data.paid_at)
+                : new Date(),
+              rawResponse: verification as any,
+              updatedAt: new Date(),
+            })
+            .where(eq(creditPurchases.id, purchase.id));
+        });
+
+        // Receipt
+        const pack = CREDIT_PACKS.find((p) => p.id === purchase.packId);
+        sendReceiptEmail({
+          email: args.userEmail,
+          tenantName: args.tenantName,
+          packName: pack?.name ?? purchase.packId,
+          uploads: purchase.creditsToCredit,
+          amount: `${purchase.currency} ${(purchase.amountKobo / 100).toFixed(2)}`,
+          reference: purchase.paystackReference,
+        }).catch((err) => console.error('[receipt-email]', err));
+      } else if (
+        remoteStatus === 'failed' ||
+        remoteStatus === 'abandoned' ||
+        purchase.createdAt < cutoffOld
+      ) {
+        // Mark as failed/abandoned so we stop polling for it
+        await db
+          .update(creditPurchases)
+          .set({
+            status: remoteStatus === 'abandoned' ? 'abandoned' : 'failed',
+            rawResponse: verification as any,
+            updatedAt: new Date(),
+          })
+          .where(eq(creditPurchases.id, purchase.id));
+      }
+      // else: still pending, leave as-is
+    } catch (err) {
+      console.error(`[sweep] purchase ${purchase.id}:`, err);
+    }
+  }
+}
+
+/**
  * GET /api/t/:tenantSlug/billing/balance — current balance + recent transactions
+ * Sweeps any pending Paystack purchases on the way in — this is our
+ * webhook substitute, since the Paystack account is shared.
  */
 billingRouter.get('/balance', async (c) => {
   const tenant = c.get('tenant')!;
+  const user = c.get('user');
+
+  // Best-effort sweep — never blocks the response if Paystack is slow
+  await sweepPendingPurchases({
+    tenantId: tenant.tenantId,
+    tenantName: tenant.tenantName,
+    userEmail: user.email,
+  });
 
   const balance = await db.query.creditBalances.findFirst({
     where: eq(creditBalances.tenantId, tenant.tenantId),
@@ -65,6 +186,21 @@ billingRouter.get('/balance', async (c) => {
     lifetimeSpent: balance?.lifetimeSpent ?? 0,
     transactions: recentTxns,
   });
+});
+
+/**
+ * POST /api/t/:tenantSlug/billing/sweep — manually trigger pending-purchase
+ * recovery (e.g. from a "Check pending payments" button).
+ */
+billingRouter.post('/sweep', async (c) => {
+  const tenant = c.get('tenant')!;
+  const user = c.get('user');
+  await sweepPendingPurchases({
+    tenantId: tenant.tenantId,
+    tenantName: tenant.tenantName,
+    userEmail: user.email,
+  });
+  return c.json({ ok: true });
 });
 
 /**

@@ -121,7 +121,10 @@ gcloud builds triggers create github \
 
    You'll also need to add CNAME records in your DNS for `40analytics.com` pointing the four prod hostnames (and three staging hostnames) at `ghs.googlehosted.com`.
 
-4. Update Paystack webhook URL → `https://api.acumen.40analytics.com/api/paystack/webhook` (and the staging equivalent)
+4. **Paystack webhook NOT used** — the Paystack account is shared with other apps, so webhooks would arrive for unrelated transactions. Acumen relies on:
+   - The post-payment callback page (`/{tenantSlug}/billing/callback`) which immediately re-verifies the transaction
+   - An auto-sweep on every `/billing/balance` fetch that re-verifies any pending purchases (recovers anyone who closed their browser before the redirect completed)
+   - A manual `POST /api/t/{tenantSlug}/billing/sweep` endpoint for explicit "check pending payments" UX
 5. Update Google OAuth → add `https://api.acumen.40analytics.com/api/auth/callback/google` and `https://api-staging.acumen.40analytics.com/api/auth/callback/google` to authorized redirect URIs
 
 ## Local dev
