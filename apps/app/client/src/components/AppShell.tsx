@@ -532,15 +532,13 @@ function UserMenu({
               </div>
               <div className="text-[11px] text-muted truncate">{me.user.email}</div>
             </div>
-            {me.user.isSuperAdmin && (
-              <Link
-                to="/admin"
-                onClick={() => setOpen(false)}
-                className="block px-3 py-2 text-[13px] text-accent hover:bg-bg font-semibold"
-              >
-                Super admin →
-              </Link>
-            )}
+            <Link
+              to="/admin/login"
+              onClick={() => setOpen(false)}
+              className="block px-3 py-2 text-[13px] text-accent hover:bg-bg font-semibold"
+            >
+              Admin portal →
+            </Link>
             <button
               onClick={async () => {
                 await signOut();

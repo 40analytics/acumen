@@ -25,6 +25,8 @@ import SettingsTeachers from '@/pages/SettingsTeachers';
 import SettingsNomenclature from '@/pages/SettingsNomenclature';
 import PromotionPreview from '@/pages/__preview/PromotionPreview';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { AdminProtectedRoute } from '@/components/AdminProtectedRoute';
+import AdminLogin from '@/pages/AdminLogin';
 
 export default function App() {
   return (
@@ -33,6 +35,7 @@ export default function App() {
       <Route path="/signin" element={<SignIn />} />
       <Route path="/signup" element={<SignUp />} />
       <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+      <Route path="/admin/login" element={<AdminLogin />} />
 
       {/* Authed */}
       <Route
@@ -46,17 +49,17 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          <ProtectedRoute>
+          <AdminProtectedRoute>
             <SuperAdmin />
-          </ProtectedRoute>
+          </AdminProtectedRoute>
         }
       />
       <Route
         path="/admin/tenants/:tenantId"
         element={
-          <ProtectedRoute>
+          <AdminProtectedRoute>
             <AdminTenant />
-          </ProtectedRoute>
+          </AdminProtectedRoute>
         }
       />
 

@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/Button';
 import { Input, Label } from '@/components/ui/Input';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/Dialog';
 import { apiClient, ApiError } from '@/lib/api';
-import { signOut } from '@/lib/auth-client';
 import {
   ArrowLeft,
   Eye,
@@ -70,8 +69,8 @@ export default function AdminTenant() {
           </div>
           <button
             onClick={async () => {
-              await signOut();
-              navigate('/signin');
+              await apiClient.post('/api/admin/auth/logout', {});
+              navigate('/admin/login', { replace: true });
             }}
             className="text-[13px] text-muted hover:text-ink"
           >

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
+import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/index.js';
 import {
@@ -14,14 +15,15 @@ import {
   adminAuditLog,
   impersonationSessions,
 } from '../db/schema.js';
-import { requireUser, requireSuperAdmin, type AppEnv } from '../middleware/auth.js';
+import { requireUser, type AppEnv } from '../middleware/auth.js';
+import { requireAdminToken, ADMIN_EMAIL } from '../middleware/adminAuth.js';
 
 export const adminRouter = new Hono<AppEnv>();
 
-// /api/admin/stop-impersonate is the only route that bypasses requireSuperAdmin
-// (because while impersonating, the user *isn't* super admin). It needs to
-// run with just requireUser, then verify there's an active impersonation
-// for this session.
+// /api/admin/stop-impersonate is called from the CUSTOMER portal while
+// the admin is impersonating someone. At that point the browser has a
+// Better Auth session (for the impersonated user) but NOT the admin cookie.
+// So this one route still uses requireUser + actor validation.
 adminRouter.post('/stop-impersonate', requireUser, async (c) => {
   const session = c.get('session');
   const actor = c.get('actor');
@@ -43,8 +45,8 @@ adminRouter.post('/stop-impersonate', requireUser, async (c) => {
   return c.json({ ok: true });
 });
 
-// Everything else requires super admin
-adminRouter.use('*', requireUser, requireSuperAdmin);
+// Everything else requires the dedicated admin token cookie
+adminRouter.use('*', requireAdminToken);
 
 // ─── DASHBOARD ──────────────────────────────────────────
 adminRouter.get('/stats', async (c) => {
@@ -120,6 +122,14 @@ adminRouter.get('/tenants/:tenantId', async (c) => {
   return c.json({ tenant, balance, members, recentUploads, recentTxns, recentPurchases });
 });
 
+// ─── Helpers ─────────────────────────────────────────────
+/** Resolve the admin's own DB user row (needed for audit trails + FK constraints). */
+async function getAdminActor() {
+  const actor = await db.query.users.findFirst({ where: eq(users.email, ADMIN_EMAIL) });
+  if (!actor) throw new Error(`Admin user not found for email ${ADMIN_EMAIL}`);
+  return actor;
+}
+
 // ─── CREDIT GRANTS / REVOKES ────────────────────────────
 const grantSchema = z.object({
   amount: z.number().int().positive().max(1000),
@@ -129,7 +139,7 @@ const grantSchema = z.object({
 adminRouter.post('/tenants/:tenantId/credits/grant', zValidator('json', grantSchema), async (c) => {
   const tenantId = c.req.param('tenantId');
   const { amount, note } = c.req.valid('json');
-  const actor = c.get('user');
+  const actor = await getAdminActor();
 
   const result = await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -172,7 +182,7 @@ adminRouter.post('/tenants/:tenantId/credits/grant', zValidator('json', grantSch
 adminRouter.post('/tenants/:tenantId/credits/revoke', zValidator('json', grantSchema), async (c) => {
   const tenantId = c.req.param('tenantId');
   const { amount, note } = c.req.valid('json');
-  const actor = c.get('user');
+  const actor = await getAdminActor();
 
   const result = await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -240,54 +250,84 @@ const impersonateSchema = z.object({
 });
 
 adminRouter.post('/impersonate', zValidator('json', impersonateSchema), async (c) => {
-  const session = c.get('session');
-  const actor = c.get('user');
   const { userId, reason } = c.req.valid('json');
 
-  if (userId === actor.id) {
-    return c.json({ error: "You can't impersonate yourself." }, 400);
+  // Resolve the admin's own user record from their email (stored in env / admin JWT).
+  // This bridges the admin-token auth to the Better Auth user table.
+  const adminUser = await db.query.users.findFirst({
+    where: eq(users.email, ADMIN_EMAIL),
+  });
+  if (!adminUser) {
+    return c.json({ error: 'Admin user record not found — ensure ADMIN_EMAIL matches a DB user.' }, 500);
   }
 
   const target = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (!target) return c.json({ error: 'User not found' }, 404);
-
-  // Refuse to impersonate another super admin
   if (target.isSuperAdmin) {
     return c.json({ error: "Can't impersonate another super admin." }, 403);
   }
+  if (target.id === adminUser.id) {
+    return c.json({ error: "You can't impersonate yourself." }, 400);
+  }
 
-  // End any prior active impersonation on this session
-  await db
-    .update(impersonationSessions)
-    .set({ endedAt: new Date() })
-    .where(
-      and(
-        eq(impersonationSessions.sessionId, session.id),
-        isNull(impersonationSessions.endedAt)
-      )
-    );
+  // Create a real Better Auth session for the impersonated user so the
+  // customer portal can load their workspace normally. Middleware will detect
+  // the active impersonationSession row and swap in the impersonated context.
+  const { randomUUID } = await import('crypto');
+  const sessionToken = randomBytes(32).toString('hex');
+  const sessionId = randomUUID();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 4 * 1000); // 4 h max impersonation
+
+  await db.execute(sql`
+    INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent, created_at, updated_at)
+    VALUES (${sessionId}, ${target.id}, ${sessionToken}, ${expiresAt.toISOString()},
+            ${c.req.header('x-forwarded-for') ?? null}, ${c.req.header('user-agent') ?? null},
+            NOW(), NOW())
+  `);
 
   const [imp] = await db
     .insert(impersonationSessions)
     .values({
-      sessionId: session.id,
+      sessionId,
       impersonatedUserId: target.id,
-      startedById: actor.id,
+      startedById: adminUser.id,
       reason: reason ?? null,
     })
     .returning();
 
   await db.insert(adminAuditLog).values({
-    actorUserId: actor.id,
+    actorUserId: adminUser.id,
     action: 'impersonation.started',
     targetUserId: target.id,
-    metadata: { reason, impersonationId: imp.id },
+    metadata: { reason, impersonationId: imp.id, sessionId },
     ipAddress: c.req.header('x-forwarded-for') ?? null,
+  });
+
+  // The cookie the customer portal will pick up
+  const IS_PROD = process.env.NODE_ENV === 'production';
+  const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN ?? '';
+  const cookieOpts = [
+    `better-auth.session_token=${sessionToken}`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+    IS_PROD ? 'Secure' : '',
+    `Path=/`,
+    `Max-Age=${60 * 60 * 4}`,
+    COOKIE_DOMAIN ? `Domain=${COOKIE_DOMAIN}` : '',
+  ].filter(Boolean).join('; ');
+
+  c.header('Set-Cookie', cookieOpts);
+
+  // Return the target's first tenant slug so the client can navigate there
+  const firstMembership = await db.query.tenantMembers.findFirst({
+    where: eq(tenantMembers.tenantId, target.id),
+    with: { tenant: true },
   });
 
   return c.json({
     ok: true,
     impersonating: { id: target.id, email: target.email, name: target.name },
+    tenantSlug: (firstMembership as any)?.tenant?.slug ?? null,
   });
 });
 

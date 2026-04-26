@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Logo } from '@/components/Logo';
-import { signOut } from '@/lib/auth-client';
 import { apiClient } from '@/lib/api';
 import { CREDIT_PACKS } from '@acumen/shared';
 import {
@@ -122,7 +121,10 @@ export default function SuperAdmin() {
             </span>
           </div>
           <button
-            onClick={async () => { await signOut(); navigate('/signin'); }}
+            onClick={async () => {
+              await apiClient.post('/api/admin/auth/logout', {});
+              navigate('/admin/login', { replace: true });
+            }}
             className="text-[13px] text-muted hover:text-ink"
           >
             Sign out

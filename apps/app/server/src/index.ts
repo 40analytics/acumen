@@ -7,6 +7,7 @@ import { meRouter } from './routes/me.js';
 import { tenantsRouter } from './routes/tenants.js';
 import { tenantRouter } from './routes/tenant.js';
 import { adminRouter } from './routes/admin.js';
+import { adminAuthRouter } from './routes/adminAuth.js';
 import { invitesRouter } from './routes/invites.js';
 // NOTE: Paystack webhook intentionally NOT mounted — the Paystack account
 // is shared across multiple Acumen-unrelated apps, so we cannot rely on
@@ -38,7 +39,8 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw));
 app.route('/api/me', meRouter);
 app.route('/api/tenants', tenantsRouter);
 app.route('/api/t/:tenantSlug', tenantRouter);
-app.route('/api/admin', adminRouter);
+app.route('/api/admin/auth', adminAuthRouter);   // public — login/logout/me
+app.route('/api/admin', adminRouter);             // protected — requireAdminToken
 app.route('/api/invites', invitesRouter);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
