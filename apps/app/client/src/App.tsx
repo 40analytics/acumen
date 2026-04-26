@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import SignIn from '@/pages/SignIn';
 import SignUp from '@/pages/SignUp';
 import Onboarding from '@/pages/Onboarding';
@@ -129,7 +129,7 @@ export default function App() {
         }
       />
       <Route
-        path="/:tenantSlug/settings/team"
+        path="/:tenantSlug/team"
         element={
           <ProtectedRoute>
             <SettingsTeam />
@@ -137,7 +137,7 @@ export default function App() {
         }
       />
       <Route
-        path="/:tenantSlug/settings/teachers"
+        path="/:tenantSlug/teachers"
         element={
           <ProtectedRoute>
             <SettingsTeachers />
@@ -145,12 +145,25 @@ export default function App() {
         }
       />
       <Route
-        path="/:tenantSlug/settings/nomenclature"
+        path="/:tenantSlug/nomenclature"
         element={
           <ProtectedRoute>
             <SettingsNomenclature />
           </ProtectedRoute>
         }
+      />
+      {/* Back-compat: old nested /settings/* paths redirect to flat routes */}
+      <Route
+        path="/:tenantSlug/settings/team"
+        element={<RedirectToFlat segment="team" />}
+      />
+      <Route
+        path="/:tenantSlug/settings/teachers"
+        element={<RedirectToFlat segment="teachers" />}
+      />
+      <Route
+        path="/:tenantSlug/settings/nomenclature"
+        element={<RedirectToFlat segment="nomenclature" />}
       />
       <Route
         path="/:tenantSlug/analytics/promotion"
@@ -201,4 +214,9 @@ export default function App() {
       <Route path="*" element={<Navigate to="/signin" replace />} />
     </Routes>
   );
+}
+
+function RedirectToFlat({ segment }: { segment: string }) {
+  const { tenantSlug } = useParams();
+  return <Navigate to={`/${tenantSlug}/${segment}`} replace />;
 }

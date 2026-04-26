@@ -166,21 +166,21 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onClick={() => setMobileOpen(false)}
               />
               <NavItem
-                href={`/${tenantSlug}/settings/team`}
+                href={`/${tenantSlug}/team`}
                 label="Team"
                 icon={<UsersIcon size={17} strokeWidth={1.9} />}
                 collapsed={collapsed}
                 onClick={() => setMobileOpen(false)}
               />
               <NavItem
-                href={`/${tenantSlug}/settings/teachers`}
+                href={`/${tenantSlug}/teachers`}
                 label="Teachers"
                 icon={<UserSquare2 size={17} strokeWidth={1.9} />}
                 collapsed={collapsed}
                 onClick={() => setMobileOpen(false)}
               />
               <NavItem
-                href={`/${tenantSlug}/settings/nomenclature`}
+                href={`/${tenantSlug}/nomenclature`}
                 label="Nomenclature"
                 icon={<Tag size={17} strokeWidth={1.9} />}
                 collapsed={collapsed}
